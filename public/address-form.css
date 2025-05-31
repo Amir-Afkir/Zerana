@@ -1,0 +1,35 @@
+#imagefont {
+  position: fixed;
+  top: 0; left: 0;
+  width: 100vw; height: 100vh;
+  background: transparent;
+  text-align: center;
+}
+#address-form {
+  position: fixed;
+  top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  background: rgba(0, 0, 0, 0.8);
+  color: #fff;
+  padding: 20px;
+  border-radius: 10px;
+}
+#address-form input,
+#address-form button {
+  font-size: 16px;
+  padding: 10px;
+  margin-top: 10px;
+  border: none;
+  border-radius: 5px;
+}
+#submit-button {
+  background: #28a745;
+  color: white;
+}
+#submit-button:hover {
+  background: #218838;
+}
+#error-message {
+  color: red;
+  display: none;
+}
