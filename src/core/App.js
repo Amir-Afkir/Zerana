@@ -1,16 +1,22 @@
 import * as THREE from 'three';
-import EventBus from './../core/EventBus.js';
-import ChunkManager from './../core/ChunkManager.js';
-import InputManager from './../core/InputManager.js';
-import PlayerController from './../core/PlayerController.js';
-import CameraController from './../core/CameraController.js';
-import HtmlHandler from '../ui/HtmlHandler.js';
+import EventBus from './EventBus.js';
+import ChunkManager from './ChunkManager.js';
+import InputManager from './InputManager.js';
+import PlayerController from './PlayerController.js';
+import CameraController from './CameraController.js';
+import TileFetcher from './TileFetcher.js';
+
 
 export class App {
   constructor() {
     this.scene = new THREE.Scene();
 
-    this.camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 10000);
+    this.camera = new THREE.PerspectiveCamera(
+      75,
+      window.innerWidth / window.innerHeight,
+      0.1,
+      10000
+    );
     this.camera.position.set(0, 100, 200);
 
     this.renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -26,30 +32,25 @@ export class App {
     this.cameraController = new CameraController(this.camera, this.renderer.domElement);
     this.playerController = new PlayerController(this.camera);
 
+    this.tileFetcher = new TileFetcher('https://tonbackend.com/chunks'); // Mets ici l’URL de ton backend
+
     window.addEventListener('resize', this.onWindowResize.bind(this));
 
-    this.clock = new THREE.Clock();
-
-    // --- Instanciation du formulaire d'adresse dès le départ ---
-    this.htmlHandler = null;
-    this.MAPBOX_API_KEY = 'VOTRE_CLE_API_MAPBOX_ICI'; // <== Remplace par ta vraie clé
-
-    // Attente éventuelle d'événement 'attributs:ready' via EventBus
-    EventBus.on('attributs:ready', (data) => {
-      if (data.apiKey) {
-        this.MAPBOX_API_KEY = data.apiKey;
-      }
-      this.initHtmlHandler();
+    // Écoute des chunks chargés
+    EventBus.on('chunk:loaded', (chunkData) => {
+      console.log('[App] Chunk reçu', chunkData);
+      this.chunkManager.loadChunk(chunkData);
     });
 
-    // Si pas d'événement, on lance direct
-    this.initHtmlHandler();
-  }
+    // Écoute des coordonnées reçues après géocodage
+    EventBus.on('mapbox:coordsReceived', ({ coords, address }) => {
+      console.log('[App] Coordonnées reçues pour', address, coords);
+      // Tu peux ici mettre à jour la position du joueur ou autre
+      // Exemple :
+      // this.playerController.setPositionFromCoords(coords);
+    });
 
-  initHtmlHandler() {
-    if (!this.htmlHandler) {
-      this.htmlHandler = new HtmlHandler(document.body, this.MAPBOX_API_KEY);
-    }
+    this.clock = new THREE.Clock();
   }
 
   init() {
