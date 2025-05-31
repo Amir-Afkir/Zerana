@@ -1,8 +1,10 @@
-// Terrain 3D (heightmap RGB + satellite)
 import * as THREE from 'three';
 
 export default class TerrainTile {
   constructor(chunkX, chunkZ, chunkSize, heightmapData, satelliteTexture) {
+    if (!heightmapData || !heightmapData.length) {
+      throw new Error('Heightmap data invalide ou vide');
+    }
     this.chunkX = chunkX;
     this.chunkZ = chunkZ;
     this.chunkSize = chunkSize;
@@ -21,12 +23,11 @@ export default class TerrainTile {
     const verticesCount = gridSize * gridSize;
     const segmentSize = this.chunkSize / (gridSize - 1);
 
-    // Positions, normals et UVs
+    // Création des buffers
     const positions = new Float32Array(verticesCount * 3);
-    const normals = new Float32Array(verticesCount * 3);
+    const normals = new Float32Array(verticesCount * 3); // initialisées à 0 par défaut
     const uvs = new Float32Array(verticesCount * 2);
 
-    // Générer la grille de sommets
     let posIndex = 0, uvIndex = 0;
     for (let z = 0; z < gridSize; z++) {
       for (let x = 0; x < gridSize; x++) {
@@ -34,8 +35,9 @@ export default class TerrainTile {
         positions[posIndex + 1] = this.heightmapData[z * gridSize + x];
         positions[posIndex + 2] = z * segmentSize;
 
+        // Normales initialisées à zéro, seront calculées après
         normals[posIndex] = 0;
-        normals[posIndex + 1] = 1;
+        normals[posIndex + 1] = 0;
         normals[posIndex + 2] = 0;
 
         uvs[uvIndex] = x / (gridSize - 1);
@@ -46,7 +48,7 @@ export default class TerrainTile {
       }
     }
 
-    // Indices triangles
+    // Indices pour triangles (2 triangles par carré)
     const indices = [];
     for (let z = 0; z < gridSize - 1; z++) {
       for (let x = 0; x < gridSize - 1; x++) {
@@ -60,24 +62,24 @@ export default class TerrainTile {
       }
     }
 
-    // Créer la géométrie
+    // Création de la géométrie Three.js
     this.geometry = new THREE.BufferGeometry();
     this.geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
     this.geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
     this.geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
     this.geometry.setIndex(indices);
-    this.geometry.computeVertexNormals();
+    this.geometry.computeVertexNormals(); // calcule les normales automatiquement
 
-    // Matériau avec texture satellite si disponible
+    // Création du matériau avec texture satellite si disponible
     this.material = new THREE.MeshStandardMaterial({
       map: this.satelliteTexture || null,
       flatShading: false,
     });
 
-    // Mesh
+    // Création du mesh
     this.mesh = new THREE.Mesh(this.geometry, this.material);
 
-    // Positionner le mesh dans la scène
+    // Positionnement dans la scène (à ajuster selon besoin)
     this.mesh.position.set(this.chunkX * this.chunkSize, 0, this.chunkZ * this.chunkSize);
   }
 
@@ -88,6 +90,7 @@ export default class TerrainTile {
   dispose() {
     this.geometry.dispose();
     this.material.dispose();
+    // Attention : ne détruire la texture que si tu es sûr qu'elle n'est plus utilisée ailleurs
     if (this.satelliteTexture) {
       this.satelliteTexture.dispose();
     }

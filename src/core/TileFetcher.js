@@ -1,61 +1,71 @@
+console.log('[je suis là');
+
 import EventBus from '../core/EventBus.js';
 import { MAPBOX_API_KEY } from '../utils/constants.js';
 import CoordinateUtils from '../data/CoordinateUtils.js';
 
 export default class TileFetcher {
   constructor(baseUrl) {
-    this.baseUrl = baseUrl; // Ex: https://api.tonbackend.com/chunks
+    this.baseUrl = baseUrl;
     this.cache = new Map();
 
     this.apiKey = MAPBOX_API_KEY;
-    this.zoom = 17; // Configurable si besoin
+    this.zoom = 17;
     this.chunkSize = 100;
 
-    console.log('[TileFetcher] Initialisation avec baseUrl:', this.baseUrl);
+    console.log('[TileFetcher] Initialisé avec baseUrl:', this.baseUrl);
     console.log('[TileFetcher] API Key Mapbox:', this.apiKey ? 'OK' : 'NON définie');
-
-    // Écoute l'événement 'addressSaved' global
-    window.addEventListener('addressSaved', async () => {
-      const address = window.savedAddress;
+    
+    // Écoute de l'événement global 'addressSaved' pour lancer le traitement d'adresse
+    EventBus.on('addressSaved', (address) => {
       console.log('[TileFetcher] Event addressSaved reçu avec adresse:', address);
-
-      if (!address || address.trim() === '') {
-        console.error('[TileFetcher] Aucune adresse valide.');
-        return;
-      }
-      if (!this.apiKey) {
-        console.error('[TileFetcher] Clé API Mapbox non définie.');
-        return;
-      }
-
-      // Géocode adresse → coords
-      const coords = await this.geocodeAddress(address);
-      if (!coords) {
-        console.error('[TileFetcher] Impossible de récupérer les coordonnées.');
-        return;
-      }
-
-      console.log('[TileFetcher] Coordonnées obtenues:', coords);
-
-      // Émet l'événement global avec coordonnées et adresse
-      EventBus.emit('mapbox:coordsReceived', { coords, address });
-      console.log('[TileFetcher] Événement mapbox:coordsReceived émis');
-
-      // Convertir coords en tuile via CoordinateUtils
-      const [lon, lat] = coords;
-      const tile = CoordinateUtils.latLonToTile(lon, lat, this.zoom);
-      console.log(`[TileFetcher] Conversion coords en tuile : x=${tile.x}, y=${tile.y}, zoom=${this.zoom}`);
-
-      // Charger chunk correspondant à la tuile centrale
-      const chunkData = await this.fetchChunk(tile.x, tile.y);
-      if (chunkData) {
-        console.log('[TileFetcher] Chunk chargé:', chunkData);
-        EventBus.emit('chunk:loaded', chunkData);
-        console.log('[TileFetcher] Événement chunk:loaded émis');
-      } else {
-        console.error('[TileFetcher] Échec chargement chunk');
-      }
+      this.handleAddress(address);
     });
+  }
+
+  async handleAddress(address) {
+    if (!address || !address.trim()) {
+      console.error('[TileFetcher] Adresse invalide reçue');
+      return;
+    }
+    if (!this.apiKey) {
+      console.error('[TileFetcher] Clé API Mapbox non définie.');
+      return;
+    }
+
+    console.log('[TileFetcher] Début géocodage pour adresse:', address);
+    const coords = await this.geocodeAddress(address);
+    if (!coords) {
+      console.error('[TileFetcher] Impossible de récupérer les coordonnées.');
+      return;
+    }
+
+    console.log('[TileFetcher] Coordonnées obtenues:', coords);
+
+    EventBus.emit('mapbox:coordsReceived', { coords, address });
+    console.log('[TileFetcher] Événement mapbox:coordsReceived émis');
+
+    const [lon, lat] = coords;
+    const tile = CoordinateUtils.latLonToTile(lon, lat, this.zoom);
+    console.log(`[TileFetcher] Conversion coords en tuile : x=${tile.x}, y=${tile.y}, zoom=${this.zoom}`);
+
+    // Si pas d'URL backend, simuler une réponse locale
+if (!this.baseUrl) {
+  console.warn('[TileFetcher] Pas d\'URL backend défini, simulation chunk...');
+  const simulatedChunk = { x: tile.x, y: tile.y, data: "Simulated chunk data" };
+  EventBus.emit('chunk:loaded', simulatedChunk);
+  console.log('[TileFetcher] Chunk simulé émis');
+  return;
+}
+
+    const chunkData = await this.fetchChunk(tile.x, tile.y);
+    if (chunkData) {
+      console.log('[TileFetcher] Chunk chargé:', chunkData);
+      EventBus.emit('chunk:loaded', chunkData);
+      console.log('[TileFetcher] Événement chunk:loaded émis');
+    } else {
+      console.error('[TileFetcher] Échec chargement chunk');
+    }
   }
 
   async fetchChunk(x, z) {

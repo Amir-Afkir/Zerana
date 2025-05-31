@@ -1,5 +1,6 @@
 // Gestion dynamique des chunks (load/unload)
 import * as THREE from 'three';
+import EventBus from './EventBus.js';
 
 export default class ChunkManager {
   constructor(scene) {
@@ -18,23 +19,71 @@ export default class ChunkManager {
   }
 
   createChunk(chunkX, chunkZ) {
+    const key = this.getChunkKey(chunkX * this.chunkSize, chunkZ * this.chunkSize);
+    console.log(`[ChunkManager] Création chunk ${key}`);
+
     const chunk = new THREE.Group();
     chunk.position.set(chunkX * this.chunkSize, 0, chunkZ * this.chunkSize);
+    chunk.chunkX = chunkX;
+    chunk.chunkZ = chunkZ;
 
-    const geometry = new THREE.BoxGeometry(this.chunkSize, 5, this.chunkSize);
-    const material = new THREE.MeshStandardMaterial({ color: 0x88cc88, wireframe: true });
-    const mesh = new THREE.Mesh(geometry, material);
-    mesh.position.y = 2.5;
-
-    chunk.add(mesh);
     this.scene.add(chunk);
+    this.chunks.set(key, chunk);
 
-    this.chunks.set(`${chunkX}_${chunkZ}`, chunk);
+    return chunk;
+  }
+
+  loadChunk(chunkData) {
+    const chunkX = chunkData.x;
+    const chunkZ = chunkData.y;
+    const key = this.getChunkKey(chunkX * this.chunkSize, chunkZ * this.chunkSize);
+
+    if (this.chunks.has(key)) {
+      console.log(`[ChunkManager] Chunk ${key} déjà chargé`);
+      return;
+    }
+
+    const chunk = this.createChunk(chunkX, chunkZ);
+
+    this.updateChunkContent(chunk, chunkData);
+  }
+
+  updateChunkContent(chunk, chunkData) {
+    console.log(`[ChunkManager] Mise à jour contenu chunk ${chunk.chunkX}_${chunk.chunkZ}`);
+
+    if (chunkData.heightmap) {
+      console.log(`  Heightmap avec ${chunkData.heightmap.length} points reçue.`);
+      this.generateTerrain(chunk, chunkData.heightmap);
+    }
+    if (chunkData.buildings) {
+      console.log(`  ${chunkData.buildings.length} bâtiments reçus.`);
+      this.generateBuildings(chunk, chunkData.buildings);
+    }
+    if (chunkData.trees) {
+      console.log(`  ${chunkData.trees.length} arbres reçus.`);
+      this.generateTrees(chunk, chunkData.trees);
+    }
+  }
+
+  // TODO: Implémenter ces méthodes pour générer le contenu réel du chunk
+  generateTerrain(chunk, heightmap) {
+    // Exemple simple : tu peux générer une géométrie plane avec des hauteurs
+    console.log(`[ChunkManager] Génération terrain pour chunk ${chunk.chunkX}_${chunk.chunkZ} (placeholder)`);
+  }
+
+  generateBuildings(chunk, buildings) {
+    console.log(`[ChunkManager] Génération bâtiments pour chunk ${chunk.chunkX}_${chunk.chunkZ} (placeholder)`);
+  }
+
+  generateTrees(chunk, trees) {
+    console.log(`[ChunkManager] Génération arbres pour chunk ${chunk.chunkX}_${chunk.chunkZ} (placeholder)`);
   }
 
   disposeChunk(chunkKey) {
     const chunk = this.chunks.get(chunkKey);
     if (!chunk) return;
+
+    console.log(`[ChunkManager] Suppression chunk ${chunkKey}`);
 
     this.scene.remove(chunk);
 
@@ -60,18 +109,19 @@ export default class ChunkManager {
 
     const neededChunks = new Set();
 
-    // Charger les chunks dans la zone définie
     for (let x = playerChunkX - this.gridRadius; x <= playerChunkX + this.gridRadius; x++) {
       for (let z = playerChunkZ - this.gridRadius; z <= playerChunkZ + this.gridRadius; z++) {
-        const key = `${x}_${z}`;
+        const key = this.getChunkKey(x * this.chunkSize, z * this.chunkSize);
         neededChunks.add(key);
+
         if (!this.chunks.has(key)) {
-          this.createChunk(x, z);
+          // Demande la création via un événement pour que TileFetcher charge les données
+          console.log(`[ChunkManager] Demande chargement chunk ${key}`);
+          EventBus.emit('requestChunk', { x, z });
         }
       }
     }
 
-    // Décharger les chunks hors zone
     for (const key of this.chunks.keys()) {
       if (!neededChunks.has(key)) {
         this.disposeChunk(key);

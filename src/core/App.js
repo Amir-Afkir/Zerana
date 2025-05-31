@@ -6,7 +6,6 @@ import PlayerController from './PlayerController.js';
 import CameraController from './CameraController.js';
 import TileFetcher from './TileFetcher.js';
 
-
 export class App {
   constructor() {
     this.scene = new THREE.Scene();
@@ -32,9 +31,15 @@ export class App {
     this.cameraController = new CameraController(this.camera, this.renderer.domElement);
     this.playerController = new PlayerController(this.camera);
 
-    this.tileFetcher = new TileFetcher('https://tonbackend.com/chunks'); // Mets ici l’URL de ton backend
+    this.tileFetcher = new TileFetcher(''); // Pas d’URL backend => simulation chunk activée
 
     window.addEventListener('resize', this.onWindowResize.bind(this));
+
+    // Écoute de l'événement 'addressSaved'
+    EventBus.on('addressSaved', (address) => {
+      console.log('[App] Adresse reçue :', address);
+      // Traitez l'adresse ici
+    });
 
     // Écoute des chunks chargés
     EventBus.on('chunk:loaded', (chunkData) => {
@@ -64,14 +69,19 @@ export class App {
   }
 
   animate() {
-    requestAnimationFrame(this.animate.bind(this));
+  requestAnimationFrame(this.animate.bind(this));
+  const dt = this.clock.getDelta();
 
-    const dt = this.clock.getDelta();
+  this.playerController.update(dt);
+  this.cameraController.update(dt, this.inputManager);
 
-    this.playerController.update(dt);
-    this.cameraController.update(dt, this.inputManager);
-    this.chunkManager.update(dt);
+  // Synchronise la position caméra avec joueur
+  const playerPos = this.playerController.position;
+  this.cameraController.getObject().position.copy(playerPos);
 
-    this.renderer.render(this.scene, this.camera);
-  }
+  this.chunkManager.update(playerPos);
+  this.renderer.render(this.scene, this.camera);
+}
+
+
 }

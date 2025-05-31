@@ -55,7 +55,7 @@ export default class HtmlHandler {
       this.validateAddress(address).then(isValid => {
         if (isValid) {
           window.savedAddress = address;
-          console.log('Adresse sauvegardée dans window.savedAddress :', window.savedAddress);
+          console.log('Adresse sauvegardée dans window.savedAddress :', window.savedAddress); 
           EventBus.emit('addressSaved', address);
           this.closeForm();
         } else {
