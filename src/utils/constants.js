@@ -5,3 +5,5 @@ export const ZOOM_LEVEL = 17;           // Niveau de zoom utilisé pour les tuil
 export const MAX_TREES_PER_CHUNK = 100; // Limite maximale d’arbres par chunk (pour performances)
 export const PLAYER_HEIGHT = 2;         // Hauteur du joueur (pour caméra, collisions)
 export const TERRAIN_GRID_SIZE = 65;    // Résolution de la heightmap (ex: 64 + 1)
+
+export const MAPBOX_API_KEY = import.meta.env.VITE_MAPBOX_API_KEY;

@@ -4,6 +4,7 @@ import ChunkManager from './../core/ChunkManager.js';
 import InputManager from './../core/InputManager.js';
 import PlayerController from './../core/PlayerController.js';
 import CameraController from './../core/CameraController.js';
+import HtmlHandler from '../ui/HtmlHandler.js';
 
 export class App {
   constructor() {
@@ -28,6 +29,27 @@ export class App {
     window.addEventListener('resize', this.onWindowResize.bind(this));
 
     this.clock = new THREE.Clock();
+
+    // --- Instanciation du formulaire d'adresse dès le départ ---
+    this.htmlHandler = null;
+    this.MAPBOX_API_KEY = 'VOTRE_CLE_API_MAPBOX_ICI'; // <== Remplace par ta vraie clé
+
+    // Attente éventuelle d'événement 'attributs:ready' via EventBus
+    EventBus.on('attributs:ready', (data) => {
+      if (data.apiKey) {
+        this.MAPBOX_API_KEY = data.apiKey;
+      }
+      this.initHtmlHandler();
+    });
+
+    // Si pas d'événement, on lance direct
+    this.initHtmlHandler();
+  }
+
+  initHtmlHandler() {
+    if (!this.htmlHandler) {
+      this.htmlHandler = new HtmlHandler(document.body, this.MAPBOX_API_KEY);
+    }
   }
 
   init() {

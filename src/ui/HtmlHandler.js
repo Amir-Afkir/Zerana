@@ -1,4 +1,3 @@
-// Gestion formulaire adresse, validation
 import EventBus from '../core/EventBus.js';
 
 export default class HtmlHandler {
@@ -7,32 +6,44 @@ export default class HtmlHandler {
     this.apiKey = null;
     this.element = null;
 
-    // Écoute l’événement global pour récupérer la clé API
     EventBus.on('attributs:ready', (data) => {
       if (data.apiKey) {
         this.apiKey = data.apiKey;
       }
     });
 
-    this.initForm();
+    this.loadCss('/address-form.css');
+    this.loadHtml('/address-form.html');
   }
 
-  initForm() {
-    this.element = document.createElement('div');
-    this.element.classList.add('address-form-container');
+  loadCss(href) {
+    const link = document.createElement('link');
+    link.rel = 'stylesheet';
+    link.href = href;
+    document.head.appendChild(link);
+  }
 
-    this.element.innerHTML = `
-      <input id="address-input" type="text" placeholder="Entrez une adresse" />
-      <button id="submit-button">Valider</button>
-      <div id="error-message" style="display:none;color:red;margin-top:5px;">Adresse invalide.</div>
-    `;
+  async loadHtml(url) {
+    try {
+      const response = await fetch(url);
+      if (!response.ok) throw new Error(`Erreur chargement HTML: ${response.status}`);
 
-    this.container.appendChild(this.element);
+      const html = await response.text();
 
-    this.bindEvents();
+      this.element = document.createElement('div');
+      this.element.innerHTML = html;
+      this.container.appendChild(this.element);
+
+      this.bindEvents();
+
+    } catch (err) {
+      console.error('Erreur lors du chargement du formulaire HTML:', err);
+    }
   }
 
   bindEvents() {
+    if (!this.element) return;
+
     const submitBtn = this.element.querySelector('#submit-button');
     const addressInput = this.element.querySelector('#address-input');
     const errorMessage = this.element.querySelector('#error-message');
@@ -47,19 +58,21 @@ export default class HtmlHandler {
           EventBus.emit('addressSaved', address);
           this.closeForm();
         } else {
-          errorMessage.style.display = 'block';
+          if (errorMessage) errorMessage.style.display = 'block';
         }
       });
     };
 
-    submitBtn.addEventListener('click', submitAddress);
+    if (submitBtn) submitBtn.addEventListener('click', submitAddress);
 
-    addressInput.addEventListener('keypress', (e) => {
-      if (e.key === 'Enter') {
-        e.preventDefault();
-        submitAddress();
-      }
-    });
+    if (addressInput) {
+      addressInput.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          submitAddress();
+        }
+      });
+    }
   }
 
   async validateAddress(address) {
