@@ -12,7 +12,7 @@ yarn-error.log*
 dist/
 build/
 
-# Env files
+# Env files (variables d'environnement)
 .env
 .env.local
 .env.*.local
