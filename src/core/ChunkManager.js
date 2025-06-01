@@ -1,131 +1,101 @@
-// Gestion dynamique des chunks (load/unload)
+// src/core/ChunkManager.js
 import * as THREE from 'three';
+import TerrainTile from './../graphics/TerrainTile.js';
 import EventBus from './EventBus.js';
 
 export default class ChunkManager {
-  constructor(scene) {
+  constructor(scene, fetcher, opts = {}) {
     this.scene = scene;
-    this.chunks = new Map(); // Map des chunks chargés, clé = "x_z"
-    this.chunkSize = 100;
-    this.gridRadius = 2;
+    this.fetcher = fetcher;
+    this.chunkSize = opts.chunkSize || 100;
+    this.gridRadius = opts.gridRadius || 2;
+    this.chunks = new Map();
+    this.loading = new Set();
+    this.playerPos = new THREE.Vector3();
+    this.lastChunk = null;
 
-    this.playerPosition = new THREE.Vector3(0, 0, 0);
+    EventBus.on('requestChunksGrid', ({ tile, zoom }) => this.loadChunksGrid(tile, zoom));
+    EventBus.on('chunk:loaded', (chunkData) => this.addChunk(chunkData));
   }
 
-  getChunkKey(x, z) {
-    const chunkX = Math.floor(x / this.chunkSize);
-    const chunkZ = Math.floor(z / this.chunkSize);
-    return `${chunkX}_${chunkZ}`;
+  getChunkKey(x, y) {
+    return `${x}_${y}`;
   }
 
-  createChunk(chunkX, chunkZ) {
-    const key = this.getChunkKey(chunkX * this.chunkSize, chunkZ * this.chunkSize);
-    console.log(`[ChunkManager] Création chunk ${key}`);
-
-    const chunk = new THREE.Group();
-    chunk.position.set(chunkX * this.chunkSize, 0, chunkZ * this.chunkSize);
-    chunk.chunkX = chunkX;
-    chunk.chunkZ = chunkZ;
-
-    this.scene.add(chunk);
-    this.chunks.set(key, chunk);
-
-    return chunk;
-  }
-
-  loadChunk(chunkData) {
-    const chunkX = chunkData.x;
-    const chunkZ = chunkData.y;
-    const key = this.getChunkKey(chunkX * this.chunkSize, chunkZ * this.chunkSize);
-
-    if (this.chunks.has(key)) {
-      console.log(`[ChunkManager] Chunk ${key} déjà chargé`);
-      return;
+  async loadChunksGrid(centerTile, zoom) {
+    // Appelé quand tu veux charger une grille autour du joueur (coord tile)
+    const { x: cx, y: cy } = centerTile;
+    for (let dx = -this.gridRadius; dx <= this.gridRadius; dx++) {
+      for (let dy = -this.gridRadius; dy <= this.gridRadius; dy++) {
+        const x = cx + dx;
+        const y = cy + dy;
+        const key = this.getChunkKey(x, y);
+        if (!this.chunks.has(key) && !this.loading.has(key)) {
+          this.loading.add(key);
+          this.fetcher.fetchChunk(x, y).then(chunkData => {
+            this.loading.delete(key);
+            if (chunkData) EventBus.emit('chunk:loaded', { ...chunkData, x, y });
+          });
+        }
+      }
     }
-
-    const chunk = this.createChunk(chunkX, chunkZ);
-
-    this.updateChunkContent(chunk, chunkData);
+    // Tu peux rajouter ici l’unload des chunks trop loin (optionnel pour commencer)
   }
 
-  updateChunkContent(chunk, chunkData) {
-    console.log(`[ChunkManager] Mise à jour contenu chunk ${chunk.chunkX}_${chunk.chunkZ}`);
+  addChunk(chunkData) {
+    const { x, y, heightmap, satelliteTexture, buildings = [], trees = [] } = chunkData;
+    const key = this.getChunkKey(x, y);
+    if (this.chunks.has(key)) return;
 
-    if (chunkData.heightmap) {
-      console.log(`  Heightmap avec ${chunkData.heightmap.length} points reçue.`);
-      this.generateTerrain(chunk, chunkData.heightmap);
-    }
-    if (chunkData.buildings) {
-      console.log(`  ${chunkData.buildings.length} bâtiments reçus.`);
-      this.generateBuildings(chunk, chunkData.buildings);
-    }
-    if (chunkData.trees) {
-      console.log(`  ${chunkData.trees.length} arbres reçus.`);
-      this.generateTrees(chunk, chunkData.trees);
+    try {
+      const tile = new TerrainTile(x, y, this.chunkSize, heightmap, satelliteTexture);
+      this.scene.add(tile.getMesh());
+      this.chunks.set(key, { tile, mesh: tile.getMesh(), buildings, trees });
+      // TODO: générer les objets buildings/trees ici
+    } catch (e) {
+      console.error(`[ChunkManager] Erreur ajout chunk ${key} :`, e);
     }
   }
 
-  // TODO: Implémenter ces méthodes pour générer le contenu réel du chunk
-  generateTerrain(chunk, heightmap) {
-    // Exemple simple : tu peux générer une géométrie plane avec des hauteurs
-    console.log(`[ChunkManager] Génération terrain pour chunk ${chunk.chunkX}_${chunk.chunkZ} (placeholder)`);
-  }
-
-  generateBuildings(chunk, buildings) {
-    console.log(`[ChunkManager] Génération bâtiments pour chunk ${chunk.chunkX}_${chunk.chunkZ} (placeholder)`);
-  }
-
-  generateTrees(chunk, trees) {
-    console.log(`[ChunkManager] Génération arbres pour chunk ${chunk.chunkX}_${chunk.chunkZ} (placeholder)`);
-  }
-
-  disposeChunk(chunkKey) {
-    const chunk = this.chunks.get(chunkKey);
+  unloadChunk(x, y) {
+    const key = this.getChunkKey(x, y);
+    const chunk = this.chunks.get(key);
     if (!chunk) return;
-
-    console.log(`[ChunkManager] Suppression chunk ${chunkKey}`);
-
-    this.scene.remove(chunk);
-
-    chunk.traverse((obj) => {
-      if (obj.geometry) obj.geometry.dispose();
-      if (obj.material) {
-        if (Array.isArray(obj.material)) {
-          obj.material.forEach(m => m.dispose());
-        } else {
-          obj.material.dispose();
-        }
-      }
-    });
-
-    this.chunks.delete(chunkKey);
+    this.scene.remove(chunk.mesh);
+    chunk.tile.dispose();
+    this.chunks.delete(key);
   }
-
+  // Appelée à chaque frame pour mettre à jour la grille de chunks autour du joueur
   update(playerPosition) {
-    this.playerPosition.copy(playerPosition);
-
-    const playerChunkX = Math.floor(this.playerPosition.x / this.chunkSize);
-    const playerChunkZ = Math.floor(this.playerPosition.z / this.chunkSize);
-
-    const neededChunks = new Set();
-
-    for (let x = playerChunkX - this.gridRadius; x <= playerChunkX + this.gridRadius; x++) {
-      for (let z = playerChunkZ - this.gridRadius; z <= playerChunkZ + this.gridRadius; z++) {
-        const key = this.getChunkKey(x * this.chunkSize, z * this.chunkSize);
-        neededChunks.add(key);
-
-        if (!this.chunks.has(key)) {
-          // Demande la création via un événement pour que TileFetcher charge les données
-          console.log(`[ChunkManager] Demande chargement chunk ${key}`);
-          EventBus.emit('requestChunk', { x, z });
-        }
-      }
-    }
-
-    for (const key of this.chunks.keys()) {
-      if (!neededChunks.has(key)) {
-        this.disposeChunk(key);
-      }
-    }
+    const playerChunkX = Math.floor(playerPosition.x / this.chunkSize);
+    const playerChunkY = Math.floor(playerPosition.z / this.chunkSize);
+    this.loadChunksGrid({ x: playerChunkX, y: playerChunkY }, this.fetcher.zoom);
   }
+
+  // 1. Trouver le chunk où se trouve le joueur
+getHeightAt(x, z) {
+  const chunkSize = this.chunkSize;
+  const chunkX = Math.floor(x / chunkSize);
+  const chunkZ = Math.floor(z / chunkSize);
+  const key = `${chunkX}_${chunkZ}`;
+  const chunk = this.chunks.get(key);
+  if (!chunk) {
+    console.log("[ChunkManager] Chunk ABSENT pour", key);
+    return 0;
+  }
+
+  // 2. Récupérer la heightmap et la grille
+  const { tile } = chunk;
+  const heightmap = tile.heightmap;
+  const gridSize = Math.sqrt(heightmap.length);
+  const subdivisions = gridSize - 1;
+
+  // 3. Position relative dans le chunk
+  const localX = x - chunkX * chunkSize;
+  const localZ = z - chunkZ * chunkSize;
+  const normX = Math.min(Math.max(0, Math.floor((localX / chunkSize) * subdivisions)), subdivisions);
+  const normZ = Math.min(Math.max(0, Math.floor((localZ / chunkSize) * subdivisions)), subdivisions);
+
+  return heightmap[normZ * gridSize + normX];
+}
 }

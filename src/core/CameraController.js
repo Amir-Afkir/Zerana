@@ -13,7 +13,6 @@ export default class CameraController {
     this.yawObject.add(this.pitchObject);
     this.pitchObject.add(camera);
 
-    this.moveSpeed = 10;
     this.lookSpeed = 0.002;
 
     this.isPointerLocked = false;
@@ -46,22 +45,7 @@ export default class CameraController {
     return this.yawObject;
   }
 
-  update(dt, inputManager) {
-    if (!this.isPointerLocked) return;
-
-    const velocity = new THREE.Vector3();
-
-    if (inputManager.isKeyPressed('KeyW')) velocity.z -= 1;
-    if (inputManager.isKeyPressed('KeyS')) velocity.z += 1;
-    if (inputManager.isKeyPressed('KeyA')) velocity.x -= 1;
-    if (inputManager.isKeyPressed('KeyD')) velocity.x += 1;
-
-    if (velocity.length() > 0) {
-      velocity.normalize();
-      velocity.applyEuler(new THREE.Euler(0, this.yawObject.rotation.y, 0));
-      velocity.multiplyScalar(this.moveSpeed * dt);
-
-      this.yawObject.position.add(velocity);
-    }
+  update(dt) {
+    // Le déplacement est piloté via PlayerController, la caméra ne fait que suivre et pivoter avec la souris.
   }
 }

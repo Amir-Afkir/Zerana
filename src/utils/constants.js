@@ -1,9 +1,13 @@
-// Constantes globales (taille chunk, zoom...)
-export const CHUNK_SIZE = 100;          // Taille d’un chunk en unités (mètres ou unité de jeu)
-export const GRID_SIZE = 5;             // Nombre de chunks chargés autour du joueur (rayon)
-export const ZOOM_LEVEL = 17;           // Niveau de zoom utilisé pour les tuiles Mapbox
-export const MAX_TREES_PER_CHUNK = 100; // Limite maximale d’arbres par chunk (pour performances)
-export const PLAYER_HEIGHT = 2;         // Hauteur du joueur (pour caméra, collisions)
-export const TERRAIN_GRID_SIZE = 65;    // Résolution de la heightmap (ex: 64 + 1)
+// src/utils/constants.js
 
+// Taille d’un chunk (en unités jeu, ex: mètres)
+export const CHUNK_SIZE = 1; // Adapte à la réalité de ta map (100 recommandé)
+
+// Nombre de chunks chargés autour du joueur (radius : 5 → 11x11 chunks)
+export const GRID_SIZE = 5;
+
+// Niveau de zoom pour Mapbox (impacte la taille réelle d’un chunk sur la planète)
+export const ZOOM_LEVEL = 17; 
+
+// API key Mapbox depuis .env (sécurisé)
 export const MAPBOX_API_KEY = import.meta.env.VITE_MAPBOX_API_KEY;
