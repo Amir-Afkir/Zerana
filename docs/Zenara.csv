@@ -1,0 +1,22 @@
+Tâche,Statut,Priorité
+Installer et configurer PostgreSQL + PostGIS,À faire,Haute
+Importer les données OSM (planet.osm ou extrait),À faire,Haute
+Mettre en place une API FastAPI (Python),À faire,Haute
+"Créer des endpoints pour récupérer les chunks (routes, bâtiments, terrain)",À faire,Haute
+Traiter les élévations (SRTM ou Mapbox Terrain-RGB),À faire,Haute
+Exporter les chunks en glTF (via pygltflib ou autre),À faire,Moyenne
+Créer un système de cache (Redis ou fichiers),À faire,Moyenne
+Configurer un système de LOD côté backend,À faire,Moyenne
+Développer le client Three.js pour charger les glTF,À faire,Haute
+Créer un gestionnaire de chunks (chargement/déchargement en fonction du joueur),À faire,Haute
+Ajouter des shaders procéduraux pour les façades,À faire,Moyenne
+"Gérer les textures selon les tags OSM (bâtiment, église, etc.)",À faire,Moyenne
+Mettre en place un système de seed pour génération procédurale pure,À faire,Basse
+Intégrer une UI minimale (ex: React ou panneau overlay HTML),À faire,Basse
+Créer une carte de debug du monde avec position actuelle,À faire,Basse
+Ajouter un système de navigation ou de minimap,À faire,Basse
+"Optimiser le rendu (instancing, merge, occlusion)",À faire,Haute
+"Mettre en place le multijoueur (optionnel, plus tard)",Optionnel,Optionnel
+Containeriser avec Docker (DB + API + Front),À faire,Moyenne
+Déployer l’architecture complète (NGINX + hébergement API/front),À faire,Moyenne
+"Télécharger planet-latest.osm.pbf, le filtrer avec osmium, et le stocker dans Scaleway Object Storage pour usage illimité",À faire,Haute

@@ -1,0 +1,21 @@
+,Tâche,Statut,Priorité
+0,Installer et configurer PostgreSQL + PostGIS,À faire,Haute
+16,"Optimiser le rendu (instancing, merge, occlusion)",À faire,Haute
+8,Développer le client Three.js pour charger les glTF,À faire,Haute
+4,Traiter les élévations (SRTM ou Mapbox Terrain-RGB),À faire,Haute
+9,Créer un gestionnaire de chunks (chargement/déchargement en fonction du joueur),À faire,Haute
+2,Mettre en place une API FastAPI (Python),À faire,Haute
+1,Importer les données OSM (planet.osm ou extrait),À faire,Haute
+3,"Créer des endpoints pour récupérer les chunks (routes, bâtiments, terrain)",À faire,Haute
+5,Exporter les chunks en glTF (via pygltflib ou autre),À faire,Moyenne
+6,Créer un système de cache (Redis ou fichiers),À faire,Moyenne
+7,Configurer un système de LOD côté backend,À faire,Moyenne
+18,Containeriser avec Docker (DB + API + Front),À faire,Moyenne
+10,Ajouter des shaders procéduraux pour les façades,À faire,Moyenne
+11,"Gérer les textures selon les tags OSM (bâtiment, église, etc.)",À faire,Moyenne
+19,Déployer l’architecture complète (NGINX + hébergement API/front),À faire,Moyenne
+12,Mettre en place un système de seed pour génération procédurale pure,À faire,Basse
+13,Intégrer une UI minimale (ex: React ou panneau overlay HTML),À faire,Basse
+14,Créer une carte de debug du monde avec position actuelle,À faire,Basse
+15,Ajouter un système de navigation ou de minimap,À faire,Basse
+17,"Mettre en place le multijoueur (optionnel, plus tard)",Optionnel,

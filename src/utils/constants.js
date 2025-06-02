@@ -10,4 +10,4 @@ export const GRID_SIZE = 5;
 export const ZOOM_LEVEL = 17; 
 
 // API key Mapbox depuis .env (sécurisé)
-export const MAPBOX_API_KEY = 'pk.eyJ1IjoiYW1pci1hZmtpciIsImEiOiJjbHp6aWE0bjkxY29hMnBzYnJvaTg2em45In0.5LTCefKFZ4diDe6MW4lpYw';
+export const MAPBOX_API_KEY = import.meta.env.VITE_MAPBOX_API_KEY;
