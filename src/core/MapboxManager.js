@@ -25,7 +25,7 @@ export default class MapboxManager {
 
     const tileConfigs = {
       'satellite': {
-        baseUrl: 'https://api.mapbox.com/styles/v1/amir-afkir/cm2dtulkh00sy01pieg5d7uh4/tiles',
+        baseUrl: 'https://api.mapbox.com/styles/v1/mapbox/satellite-v9/tiles',
         extension: ''
       },
       'terrain-rgb': {
