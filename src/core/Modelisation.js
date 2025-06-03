@@ -1,15 +1,18 @@
 import * as THREE from 'three';
+import {
+  CHUNK_SIZE,
+} from '../utils/constants.js';
 
 /**
  * Génère un mesh de terrain à partir d'une heightmap (float32array 512x512 ou 64x64 interpolé)
+ * Correction : sampling avec Math.floor pour garantir l'alignement parfait des bords
  */
 export function generateMeshFromHeightmap(chunk, neighbors = {}, material = null) {
   const originalGridSize = 64;  // Grid d'origine
   const enlargedGridSize = 512; // Grid interpolée
   const heightmap = chunk.heightmap;
 
-  const chunkSize = chunk.size || chunk.chunkSize || 100;
-  const halfChunk = chunkSize / 2;
+  const chunkSize = CHUNK_SIZE ;
 
   const geometry = new THREE.PlaneGeometry(
     chunkSize,
@@ -34,8 +37,9 @@ export function generateMeshFromHeightmap(chunk, neighbors = {}, material = null
   for (let row = 0; row < originalGridSize; row++) {
     for (let col = 0; col < originalGridSize; col++) {
       const vertexIdx = row * originalGridSize + col;
-      const enlargedRow = Math.round(row * scale);
-      const enlargedCol = Math.round(col * scale);
+      // Correction : sampling avec Math.floor pour garantir l'alignement des bords
+      const enlargedRow = Math.floor(row * scale);
+      const enlargedCol = Math.floor(col * scale);
       const idx = enlargedRow * enlargedGridSize + enlargedCol;
       pos.setY(vertexIdx, heightmap[idx]);
     }

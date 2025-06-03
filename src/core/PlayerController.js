@@ -20,6 +20,9 @@ export default class PlayerController {
     // Pour le système d'animation, à brancher selon ton archi (ex: mixers, .play('run'))
     this.animations = options.animations || null;
 
+    // Ajout : référence au contrôleur caméra avancé
+    this.cameraController = options.cameraController || null;
+
     // Event listeners
     this.initEventListeners();
   }
@@ -47,6 +50,13 @@ export default class PlayerController {
     // Changement d'arme
     EventBus.on('player:weaponChanged', (hasPistol) => {
       this.hasPistol = hasPistol;
+      // Déclenche la transition caméra
+      if (this.cameraController) {
+        // La logique de transition est gérée côté CameraController via EventBus
+        // On peut forcer une update immédiate si besoin
+        this.cameraController.isTransitioning = true;
+        this.cameraController.transitionTime = 0;
+      }
     });
   }
 
@@ -55,8 +65,11 @@ export default class PlayerController {
     // Animation de tir (à plugger selon ton archi)
     if (this.animations?.fireGun) this.animations.fireGun();
 
-    // Recul caméra (optionnel)
-    if (this.camera) {
+    // Effet de recul caméra amélioré
+    if (this.cameraController) {
+      this.cameraController.applyRecoil(0.7, 100);
+    } else if (this.camera) {
+      // Fallback simple
       const recoil = new THREE.Vector3(0, 0, -0.5);
       this.camera.position.add(recoil);
       setTimeout(() => this.camera.position.sub(recoil), 100);
@@ -107,7 +120,7 @@ export default class PlayerController {
     // Met à jour la caméra (mode "collée au joueur")
     if (this.camera) this.camera.position.copy(this.position);
 
-    // Exemples d’animation à plugger
+    // Exemples d'animation à plugger
     if (this.animations?.setDirection) {
       this.animations.setDirection(
         this.moveLeft ? -1 : this.moveRight ? 1 : 0,
@@ -115,10 +128,10 @@ export default class PlayerController {
       );
     }
 
-    // Pour debug : log la position
+    // Pour debug : log la position
     // console.log('Player pos:', this.position.x, this.position.y, this.position.z);
 
-    // Pour compatibilité, tu peux rajouter :
+    // Pour compatibilité, tu peux rajouter :
     // this.prevPos.copy(this.position);
   }
 }

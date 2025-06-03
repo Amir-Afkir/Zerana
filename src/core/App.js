@@ -4,6 +4,7 @@ import GlobeManager from './GlobeManager.js';
 import MapboxManager from './MapboxManager.js';
 import PlayerController from './PlayerController.js';
 import HeightmapUtils from '../utils/HeightmapUtils.js';
+import CameraController from './CameraController.js';
 
 export class App {
   constructor() {
@@ -52,8 +53,33 @@ export class App {
     this.playerMesh.position.set(0, 0, 0);
     this.scene.add(this.playerMesh);
 
-    // Controle joueur (déplacement)
-    this.playerController = new PlayerController(this.camera, this.globeManager, { walkSpeed: 3, runSpeed: 10 });
+    this.playerMesh.name = 'cible';
+
+    const rayEnd = new THREE.Object3D();
+    rayEnd.name = 'RaycastEndPoint';
+    rayEnd.position.set(0, 0, 10);
+    this.playerMesh.add(rayEnd);
+    this.scene.add(rayEnd);
+
+    // Instanciation du contrôleur caméra avancé
+    this.cameraController = new CameraController(
+      this.camera,
+      this.renderer.domElement,
+      this.scene
+    );
+
+    this.scene.add(this.cameraController.getObject());
+
+    // Passe la référence au PlayerController
+    this.playerController = new PlayerController(
+      this.camera,
+      this.globeManager,
+      {
+        walkSpeed: 3,
+        runSpeed: 10,
+        cameraController: this.cameraController
+      }
+    );
 
     // Position initiale caméra (derrière et au-dessus)
     this.camera.position.set(0, 30, 50);
@@ -115,31 +141,33 @@ export class App {
     this.renderer.setSize(window.innerWidth, window.innerHeight);
   }
 
-animate = () => {
-  requestAnimationFrame(this.animate);
+  animate = () => {
+    requestAnimationFrame(this.animate);
 
-  const dt = this.clock.getDelta();
+    const dt = this.clock.getDelta();
 
-  this.playerController.update(dt);
+    this.playerController.update(dt);
 
-  // Met à jour la hauteur sur le terrain
-  const y = HeightmapUtils.getHeightAt(this.stubPlayer.position, this.globeManager);
-  if (!isNaN(y)) this.stubPlayer.position.y = y;
+    // Met à jour la hauteur sur le terrain
+    const y = HeightmapUtils.getHeightAt(this.stubPlayer.position, this.globeManager);
+    if (!isNaN(y)) this.stubPlayer.position.y = y;
 
-  // Sync boule rouge avec la position joueur
-  this.playerMesh.position.copy(this.stubPlayer.position);
+    // Sync boule rouge avec la position joueur
+    this.playerMesh.position.copy(this.stubPlayer.position);
 
-  // Caméra suit le joueur avec un léger lag
-  const camOffset = new THREE.Vector3(0, 25, 60);
-  const camPos = this.stubPlayer.position.clone().add(camOffset);
-  this.camera.position.lerp(camPos, 0.1);
-  this.camera.lookAt(this.stubPlayer.position);
+    // Caméra suit le joueur avec un léger lag
+    const camOffset = new THREE.Vector3(0, 25, 60);
+    const camPos = this.stubPlayer.position.clone().add(camOffset);
+    this.camera.position.lerp(camPos, 0.1);
+    this.camera.lookAt(this.playerMesh.position);
 
-  this.globeManager.updateChunks();
+    // Ajout : update du contrôleur caméra avancé
+    this.cameraController.update(dt);
 
-  this.renderer.render(this.scene, this.camera);
-};
+    this.globeManager.updateChunks();
 
+    this.renderer.render(this.scene, this.camera);
+  };
 }
 
 export default App;

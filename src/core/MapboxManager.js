@@ -171,4 +171,4 @@ async fetchCoords(address) {
     const tileWidthMeters = earthCircum * Math.cos(lat * Math.PI / 180) / Math.pow(2, zoom);
     return tileWidthMeters / chunkSize;
   }
-}
+} 
