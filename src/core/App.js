@@ -1,5 +1,6 @@
 // src/core/App.js
 import * as THREE from 'three';
+import EventBus from './EventBus.js';
 import GlobeManager from './GlobeManager.js'; 
 import MapboxManager from './MapboxManager.js';
 import PlayerController from '../players/PlayerController.js';
@@ -13,13 +14,6 @@ export class App {
   constructor(modelUrl) {
     this.modelUrl = modelUrl;
     this.scene = new THREE.Scene();
-
-    this.camera = new THREE.PerspectiveCamera(
-      75,
-      window.innerWidth / window.innerHeight,
-      0.1,
-      10000
-    );
 
     this.renderer = new THREE.WebGLRenderer({ antialias: true });
     this.renderer.setSize(window.innerWidth, window.innerHeight);
@@ -44,6 +38,9 @@ export class App {
     this.realPlayer = null;
     this.realPlayerLoaded = false;
 
+    this.cameraController = new CameraController(this.renderer.domElement);
+    this.camera = this.cameraController.getCamera();
+
     this.realPlayer = new RealPlayer(this.scene, (instance) => {
       this.realPlayerLoaded = true;
       // Dynamically scale the player based on terrain scale (1 chunk ≈ 100 meters)
@@ -51,11 +48,11 @@ export class App {
       instance.model.scale.setScalar(scale);
       instance.setPosition(0, 5, 0);
       // AvatarSelector and keydown handler now initialized after player loaded
-      this.avatarSelector = new AvatarSelector(this.realPlayer, this.scene);
+      this.avatarSelector = new AvatarSelector(this.realPlayer, this.scene, this.globeManager);
       window.addEventListener('keydown', (e) => {
         if (e.code === 'KeyC') this.avatarSelector.open();
       });
-    }, this.modelUrl);
+    }, this.modelUrl, this.globeManager); // <- ajout de globeManager ici
 
     this.playerController = new PlayerController(
       this.realPlayer,
@@ -74,14 +71,13 @@ export class App {
 
     window.addEventListener('resize', () => this.onWindowResize());
 
-    if (window.savedAddress) {
-      this.handleAddress(window.savedAddress);
-    }
-
     this.clock = new THREE.Clock();
-    
-    // CameraController for orbit logic
-    this.cameraController = new CameraController(this.renderer.domElement);
+
+    // Listen for reposition event
+    EventBus.on('player:reposition', () => {
+      if (!window.savedAddress) return;
+      this.handleAddress(window.savedAddress);
+    });
   }
 
   handleAddress = async (address) => {
@@ -133,12 +129,12 @@ export class App {
 
     // Orbit camera logic via CameraController
     if (this.realPlayerLoaded && this.realPlayer.model) {
-      this.cameraController.update(this.camera, this.realPlayer.model.position);
+      this.cameraController.update(this.realPlayer.model.position);
     }
 
     this.globeManager.updateChunks();
 
-    this.renderer.render(this.scene, this.camera);
+    this.renderer.render(this.scene, this.cameraController.getCamera());
   };
 }
 

@@ -57,6 +57,7 @@ export default class HtmlHandler {
           window.savedAddress = address;
           console.log('Adresse sauvegardée dans window.savedAddress :', window.savedAddress); 
           EventBus.emit('addressSaved', address);
+          EventBus.emit('player:reposition');
           this.closeForm();
         } else {
           if (errorMessage) errorMessage.style.display = 'block';

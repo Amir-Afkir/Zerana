@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { CHUNK_SIZE } from '../utils/constants.js';
 
 export default class CameraController {
+  
   constructor(domElement) {
     this.domElement = domElement;
 
@@ -16,6 +17,13 @@ export default class CameraController {
 
     // Décalage de la cible (caméra vise la tête/torse du joueur)
     this.targetOffset = new THREE.Vector3(0, CHUNK_SIZE * 0.017, 0); // ≈ 1.7 m
+
+    this.camera = new THREE.PerspectiveCamera(
+      75,
+      window.innerWidth / window.innerHeight,
+      CHUNK_SIZE * .01,     // plus petit plan proche
+      CHUNK_SIZE * 10000 // ou 1000 selon l'échelle réelle de ton monde
+    );
 
     // Contrôle souris
     document.addEventListener('mousemove', (e) => {
@@ -37,7 +45,7 @@ export default class CameraController {
     }, { passive: true });
   }
 
-  update(camera, target) {
+  update(target) {
     const sinAz = Math.sin(this.azimuth);
     const cosAz = Math.cos(this.azimuth);
     const sinEl = Math.sin(this.elevation);
@@ -47,7 +55,12 @@ export default class CameraController {
     const y = target.y + this.distance * cosEl;
     const z = target.z + this.distance * sinEl * cosAz;
 
-    camera.position.set(x, y, z);
-    camera.lookAt(target.clone().add(this.targetOffset));
+    this.camera.position.set(x, y, z);
+    this.camera.lookAt(target.clone().add(this.targetOffset));
   }
+
+  getCamera() {
+    return this.camera;
+  }
+
 }

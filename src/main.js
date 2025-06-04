@@ -5,16 +5,18 @@ import HtmlHandler from './ui/HtmlHandler.js';
 import { App } from './core/App.js';
 
 window.onload = () => {
-  // Émettre la clé API pour que les modules l’utilisent
   eventBus.emit('attributs:ready', { apiKey: MAPBOX_API_KEY });
 
-  // Démarrer le formulaire d’adresse
+  // Lancer tout de suite l’application (sans carte encore)
+  const app = new App();
+  app.init();
+  window.app = app;
+
+  // Afficher formulaire
   new HtmlHandler(document.body);
 
-  // Quand l’adresse est validée, démarrer le jeu
+  // Quand l’adresse est validée, repositionner le joueur
   eventBus.on('addressSaved', () => {
-    const app = new App();
-    app.init();
-    window.app = app;
+    eventBus.emit('player:reposition');
   });
 };
