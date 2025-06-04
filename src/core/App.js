@@ -6,9 +6,12 @@ import PlayerController from '../players/PlayerController.js';
 import HeightmapUtils from '../utils/HeightmapUtils.js';
 import CameraController from '../players/CameraController.js';
 import RealPlayer from '../players/RealPlayer.js';
+import AvatarSelector from './../ui/AvatarSelector.js';
+
 
 export class App {
-  constructor() {
+  constructor(modelUrl) {
+    this.modelUrl = modelUrl;
     this.scene = new THREE.Scene();
 
     this.camera = new THREE.PerspectiveCamera(
@@ -46,12 +49,13 @@ export class App {
       // Dynamically scale the player based on terrain scale (1 chunk ≈ 100 meters)
       const scale = this.globeManager.chunkSize / 100;
       instance.model.scale.setScalar(scale);
-      instance.setPosition(
-        this.stubPlayer.position.x,
-        this.stubPlayer.position.y,
-        this.stubPlayer.position.z
-      );
-    });
+      instance.setPosition(0, 5, 0);
+      // AvatarSelector and keydown handler now initialized after player loaded
+      this.avatarSelector = new AvatarSelector(this.realPlayer, this.scene);
+      window.addEventListener('keydown', (e) => {
+        if (e.code === 'KeyC') this.avatarSelector.open();
+      });
+    }, this.modelUrl);
 
     this.playerController = new PlayerController(
       this.realPlayer,
@@ -95,15 +99,11 @@ export class App {
         const y = HeightmapUtils.getHeightAt(centerChunkPos, this.globeManager) || 0;
         this.stubPlayer.position.set(centerChunkPos.x, y, centerChunkPos.z);
         if (this.realPlayerLoaded) {
-          this.realPlayer.setPosition(
-            this.stubPlayer.position.x,
-            this.stubPlayer.position.y,
-            this.stubPlayer.position.z
-          );
+          this.realPlayer.setPosition(centerChunkPos.x, y, centerChunkPos.z);
+          this.camera.lookAt(this.realPlayer.getPosition());
         }
 
         this.camera.position.set(centerChunkPos.x, y + 30, centerChunkPos.z + 50);
-        this.camera.lookAt(this.stubPlayer.position);
       }
     } catch (err) {
       console.error('[App] Erreur dans handleAddress:', err);
@@ -124,12 +124,6 @@ export class App {
     requestAnimationFrame(this.animate);
 
     const dt = this.clock.getDelta();
-
-    // Force initial player position if needed
-    if (this.realPlayerLoaded && !this.initialPlayerPositioned) {
-      this.initialPlayerPositioned = true;
-      this.realPlayer.setPosition(0, 5, 0);
-    }
 
     this.playerController.update(dt);
 
