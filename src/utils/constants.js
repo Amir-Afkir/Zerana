@@ -1,7 +1,7 @@
 // src/utils/constants.js
 
 // Taille d’un chunk (en unités jeu, ex: mètres)
-export const CHUNK_SIZE = 1; // Adapte à la réalité de ta map (100 recommandé)
+export const CHUNK_SIZE = 100; // Adapte à la réalité de ta map (100 recommandé)
 
 // Nombre de chunks chargés autour du joueur (radius : 5 → 11x11 chunks)
 export const GRID_SIZE = 5;

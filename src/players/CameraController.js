@@ -12,7 +12,7 @@ export default class CameraController {
     this.elevation = Math.PI / 4;
 
     // Distance de la caméra (proportionnelle au chunk)
-    this.baseDistance = CHUNK_SIZE * 0.04;
+    this.baseDistance = CHUNK_SIZE * 0.03;
     this.distance = this.baseDistance;
 
     // Décalage de la cible (caméra vise la tête/torse du joueur)
@@ -41,7 +41,7 @@ export default class CameraController {
     // Molette pour zoom (indexé aussi au CHUNK_SIZE)
     this.domElement.addEventListener('wheel', (event) => {
       const zoomDelta = (CHUNK_SIZE * 0.01) * (event.deltaY > 0 ? 1 : -1);
-      this.distance = THREE.MathUtils.clamp(this.distance + zoomDelta, CHUNK_SIZE * 0.05, CHUNK_SIZE * 1.5);
+      this.distance = THREE.MathUtils.clamp(this.distance + zoomDelta, this.baseDistance, CHUNK_SIZE * 1.5);
     }, { passive: true });
   }
 
