@@ -166,7 +166,7 @@ async fetchCoords(address) {
     return { lon, lat };
   }
 
-  calcScaleFactor(lat, zoom, chunkSize = this.chunkSize) {
+  calcScaleFactor(lat, zoom, chunkSize) {
     const earthCircum = 40075017;
     const tileWidthMeters = earthCircum * Math.cos(lat * Math.PI / 180) / Math.pow(2, zoom);
     return tileWidthMeters / chunkSize;

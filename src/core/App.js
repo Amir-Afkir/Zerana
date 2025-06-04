@@ -2,9 +2,10 @@
 import * as THREE from 'three';
 import GlobeManager from './GlobeManager.js'; 
 import MapboxManager from './MapboxManager.js';
-import PlayerController from './PlayerController.js';
+import PlayerController from '../players/PlayerController.js';
 import HeightmapUtils from '../utils/HeightmapUtils.js';
-import CameraController from './CameraController.js';
+import CameraController from '../players/CameraController.js';
+import RealPlayer from '../players/RealPlayer.js';
 
 export class App {
   constructor() {
@@ -22,16 +23,13 @@ export class App {
     this.renderer.setClearColor(0xaaaaaa);
     document.body.appendChild(this.renderer.domElement);
 
-    // Lumières
     const dirLight = new THREE.DirectionalLight(0xffffff, 1);
     dirLight.position.set(100, 200, 100);
     this.scene.add(dirLight);
     this.scene.add(new THREE.AmbientLight(0x404040));
 
-    // Managers
     this.mapboxManager = new MapboxManager();
 
-    // Stub joueur (position sera mise à jour)
     this.stubPlayer = { position: new THREE.Vector3(0, 0, 0) };
 
     this.globeManager = new GlobeManager({
@@ -40,59 +38,46 @@ export class App {
       player: this.stubPlayer
     });
 
-    // Création boule rouge joueur
-    // Taille réelle souhaitée en mètres (exemple 1 mètre)
-    const realDiameterMeters = 1;
-    const scaleFactor = this.globeManager.chunkSize;
-    const diameterUnits = realDiameterMeters / scaleFactor;
-    const radiusUnits = diameterUnits / 2;
+    this.realPlayer = null;
+    this.realPlayerLoaded = false;
 
-    const geometry = new THREE.SphereGeometry(radiusUnits, 32, 32);
-    const material = new THREE.MeshStandardMaterial({ color: 0xff0000 });
-    this.playerMesh = new THREE.Mesh(geometry, material);
-    this.playerMesh.position.set(0, 0, 0);
-    this.scene.add(this.playerMesh);
+    this.realPlayer = new RealPlayer(this.scene, (instance) => {
+      this.realPlayerLoaded = true;
+      // Dynamically scale the player based on terrain scale (1 chunk ≈ 100 meters)
+      const scale = this.globeManager.chunkSize / 100;
+      instance.model.scale.setScalar(scale);
+      instance.setPosition(
+        this.stubPlayer.position.x,
+        this.stubPlayer.position.y,
+        this.stubPlayer.position.z
+      );
+    });
 
-    this.playerMesh.name = 'cible';
-
-    const rayEnd = new THREE.Object3D();
-    rayEnd.name = 'RaycastEndPoint';
-    rayEnd.position.set(0, 0, 10);
-    this.playerMesh.add(rayEnd);
-    this.scene.add(rayEnd);
-
-    // Instanciation du contrôleur caméra avancé
-    this.cameraController = new CameraController(
-      this.camera,
-      this.renderer.domElement,
-      this.scene
-    );
-
-    this.scene.add(this.cameraController.getObject());
-
-    // Passe la référence au PlayerController
     this.playerController = new PlayerController(
-      this.camera,
+      this.realPlayer,
       this.globeManager,
       {
         walkSpeed: 3,
         runSpeed: 10,
-        cameraController: this.cameraController
+        // cameraController: this.cameraController
       }
     );
 
-    // Position initiale caméra (derrière et au-dessus)
     this.camera.position.set(0, 30, 50);
-    this.camera.lookAt(this.playerMesh.position);
+    if (this.realPlayerLoaded) {
+      this.camera.lookAt(this.realPlayer.getPosition());
+    }
 
-    // Resize
-    window.addEventListener('resize', this.onWindowResize.bind(this));
+    window.addEventListener('resize', () => this.onWindowResize());
 
     if (window.savedAddress) {
       this.handleAddress(window.savedAddress);
     }
 
     this.clock = new THREE.Clock();
+    
+    // CameraController for orbit logic
+    this.cameraController = new CameraController(this.renderer.domElement);
   }
 
   handleAddress = async (address) => {
@@ -101,7 +86,6 @@ export class App {
       if (coords) {
         await this.globeManager.initFromCoords(coords[0], coords[1]);
 
-        // Placer joueur au centre chunk et hauteur
         const chunkInfo = this.globeManager.getChunkInfo(this.stubPlayer.position);
         const centerChunkPos = new THREE.Vector3(
           chunkInfo.position.x * this.globeManager.chunkSize,
@@ -110,9 +94,14 @@ export class App {
         );
         const y = HeightmapUtils.getHeightAt(centerChunkPos, this.globeManager) || 0;
         this.stubPlayer.position.set(centerChunkPos.x, y, centerChunkPos.z);
-        this.playerMesh.position.copy(this.stubPlayer.position);
+        if (this.realPlayerLoaded) {
+          this.realPlayer.setPosition(
+            this.stubPlayer.position.x,
+            this.stubPlayer.position.y,
+            this.stubPlayer.position.z
+          );
+        }
 
-        // Caméra derrière et au-dessus
         this.camera.position.set(centerChunkPos.x, y + 30, centerChunkPos.z + 50);
         this.camera.lookAt(this.stubPlayer.position);
       }
@@ -120,16 +109,6 @@ export class App {
       console.error('[App] Erreur dans handleAddress:', err);
     }
   };
-
-  lonToX(lon) {
-    const tile = this.mapboxManager.latLonToTile(lon, 0, this.mapboxManager.zoom);
-    return tile.x * this.mapboxManager.chunkSize;
-  }
-
-  latToZ(lat) {
-    const tile = this.mapboxManager.latLonToTile(0, lat, this.mapboxManager.zoom);
-    return tile.y * this.mapboxManager.chunkSize;
-  }
 
   init() {
     this.animate();
@@ -146,23 +125,22 @@ export class App {
 
     const dt = this.clock.getDelta();
 
+    // Force initial player position if needed
+    if (this.realPlayerLoaded && !this.initialPlayerPositioned) {
+      this.initialPlayerPositioned = true;
+      this.realPlayer.setPosition(0, 5, 0);
+    }
+
     this.playerController.update(dt);
 
-    // Met à jour la hauteur sur le terrain
     const y = HeightmapUtils.getHeightAt(this.stubPlayer.position, this.globeManager);
     if (!isNaN(y)) this.stubPlayer.position.y = y;
 
-    // Sync boule rouge avec la position joueur
-    this.playerMesh.position.copy(this.stubPlayer.position);
 
-    // Caméra suit le joueur avec un léger lag
-    const camOffset = new THREE.Vector3(0, 25, 60);
-    const camPos = this.stubPlayer.position.clone().add(camOffset);
-    this.camera.position.lerp(camPos, 0.1);
-    this.camera.lookAt(this.playerMesh.position);
-
-    // Ajout : update du contrôleur caméra avancé
-    this.cameraController.update(dt);
+    // Orbit camera logic via CameraController
+    if (this.realPlayerLoaded && this.realPlayer.model) {
+      this.cameraController.update(this.camera, this.realPlayer.model.position);
+    }
 
     this.globeManager.updateChunks();
 
