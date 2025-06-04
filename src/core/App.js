@@ -41,18 +41,18 @@ export class App {
     this.cameraController = new CameraController(this.renderer.domElement);
     this.camera = this.cameraController.getCamera();
 
-    this.realPlayer = new RealPlayer(this.scene, (instance) => {
+    this.realPlayer = new RealPlayer(this.scene, (player) => {
       this.realPlayerLoaded = true;
       // Dynamically scale the player based on terrain scale (1 chunk ≈ 100 meters)
-      const scale = this.globeManager.chunkSize / 100;
-      instance.model.scale.setScalar(scale);
-      instance.setPosition(0, 5, 0);
+      player.setScaleFromChunk(this.globeManager.chunkSize);
+      player.setPosition(0, 5, 0);
+      this.cameraController.snapTo(player.model.position);
       // AvatarSelector and keydown handler now initialized after player loaded
       this.avatarSelector = new AvatarSelector(this.realPlayer, this.scene, this.globeManager);
       window.addEventListener('keydown', (e) => {
         if (e.code === 'KeyC') this.avatarSelector.open();
       });
-    }, this.modelUrl, this.globeManager); // <- ajout de globeManager ici
+    }, this.modelUrl, this.globeManager);
 
     this.playerController = new PlayerController(
       this.realPlayer,
@@ -63,11 +63,6 @@ export class App {
         // cameraController: this.cameraController
       }
     );
-
-    this.camera.position.set(0, 30, 50);
-    if (this.realPlayerLoaded) {
-      this.camera.lookAt(this.realPlayer.getPosition());
-    }
 
     window.addEventListener('resize', () => this.onWindowResize());
 
@@ -96,10 +91,8 @@ export class App {
         this.stubPlayer.position.set(centerChunkPos.x, y, centerChunkPos.z);
         if (this.realPlayerLoaded) {
           this.realPlayer.setPosition(centerChunkPos.x, y, centerChunkPos.z);
-          this.camera.lookAt(this.realPlayer.getPosition());
+          this.cameraController.snapTo(this.realPlayer.getPosition());
         }
-
-        this.camera.position.set(centerChunkPos.x, y + 30, centerChunkPos.z + 50);
       }
     } catch (err) {
       console.error('[App] Erreur dans handleAddress:', err);

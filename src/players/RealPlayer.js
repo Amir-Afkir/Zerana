@@ -12,12 +12,18 @@ export default class RealPlayer {
 
     this.loader.load(modelUrl, (gltf) => {
       this.model = gltf.scene;
-      const scale = CHUNK_SIZE / 100;
-      this.model.scale.setScalar(scale);
+      this.setScaleFromChunk(CHUNK_SIZE);
       scene.add(this.model);
 
       if (onLoaded) onLoaded(this);
     });
+  }
+
+  setScaleFromChunk(chunkSize) {
+    const scale = chunkSize / 100;
+    if (this.model) {
+      this.model.scale.setScalar(scale);
+    }
   }
 
   setPosition(x, y, z) {
@@ -42,8 +48,7 @@ export default class RealPlayer {
 
     this.loader.load(modelUrl, (gltf) => {
       this.model = gltf.scene;
-      const scale = CHUNK_SIZE / 100;
-      this.model.scale.setScalar(scale);
+      this.setScaleFromChunk(CHUNK_SIZE);
       this.model.position.copy(prevPos);
 
       // 🔁 Recalcule automatiquement la hauteur si globeManager est fourni

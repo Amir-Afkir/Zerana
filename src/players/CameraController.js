@@ -63,4 +63,8 @@ export default class CameraController {
     return this.camera;
   }
 
+  snapTo(target) {
+    this.update(target);
+  }
+
 }
