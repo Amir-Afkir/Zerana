@@ -1,0 +1,2 @@
+.stream-panel{border-top:1px solid #34505e;margin-top:18px;padding-top:14px}.stream-panel h2{font-size:1rem;margin:0 0 12px}.stream-actions{display:flex;gap:8px;margin:10px 0}.stream-actions button{flex:1;padding:10px 6px}.stream-check{display:flex!important;align-items:center;gap:8px;font-size:.8rem}.stream-check input{width:auto}#stream-status{font-size:.8rem;line-height:1.5;color:#b4d7db}#stream-metrics{font-size:.76rem}
+.stream-check[hidden]{display:none!important}

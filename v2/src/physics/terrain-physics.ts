@@ -20,7 +20,7 @@ export interface PhysicsWorld {
   dispose(): void;
 }
 interface Collider {
-  readonly anchor: GeoAnchor; readonly index: TriangleIndex;
+  readonly anchor: GeoAnchor; readonly index: TriangleIndex; readonly packet: TerrainCellPacket;
   readonly toCell: LocalFrameTransform; readonly fromCell: LocalFrameTransform;
 }
 function endpoints(c: Capsule): readonly [Vec3,Vec3] {
@@ -35,10 +35,15 @@ function endpoints(c: Capsule): readonly [Vec3,Vec3] {
  */
 export class TerrainPhysics implements PhysicsWorld {
   private colliders: readonly Collider[];
-  readonly triangleCount: number;
+  private count = 0;
+  private frame: GeoAnchor;
+  private maxCells: number;
+  private readonly allowPreview: boolean;
   readonly altitudeAuthority: 'ellipsoidal'|'preview-only';
-  constructor(packets: readonly TerrainCellPacket[],anchor: GeoAnchor,options: {allowPreview?:boolean}={}){
-    if(!packets.length||packets.length>9) throw new RangeError('Expected 1–9 terrain colliders');
+  constructor(packets: readonly TerrainCellPacket[],anchor: GeoAnchor,options: {allowPreview?:boolean;maxCells?:number}={}){
+    this.maxCells=options.maxCells??9;this.allowPreview=options.allowPreview===true;this.frame=anchor;
+    if(!Number.isInteger(this.maxCells)||this.maxCells<1||this.maxCells>64) throw new RangeError('Invalid collider capacity');
+    if(!packets.length||packets.length>this.maxCells) throw new RangeError('Terrain collider capacity exceeded');
     this.altitudeAuthority=packets.some(p=>p.altitudeAuthority==='preview-only')?'preview-only':'ellipsoidal';
     if(this.altitudeAuthority==='preview-only' && options.allowPreview!==true)
       throw new Error('PREVIEW_COLLISION_REQUIRES_EXPLICIT_OPT_IN');
@@ -47,19 +52,46 @@ export class TerrainPhysics implements PhysicsWorld {
         (p.altitudeAuthority==='ellipsoidal' && p.verticalReference!=='ELLIPSOIDAL_WGS84'))
         throw new Error('INVALID_COLLIDER_AUTHORITY');
     }
-    this.triangleCount=packets.reduce((n,p)=>n+p.indices.length/3,0);
-    if(this.triangleCount>COLLISION.maxTriangles) throw new RangeError('Collision budget exceeded; reduce subdivisions');
+    this.count=packets.reduce((n,p)=>n+p.indices.length/3,0);
+    if(this.count>COLLISION.maxTriangles) throw new RangeError('Collision budget exceeded; reduce subdivisions');
     this.colliders=packets.map(p=>{
       const cell=createGeoAnchor(p.anchor.geodetic);
-      return {anchor:cell,index:new TriangleIndex(p.positions,p.indices),toCell:frameTransform(anchor,cell),fromCell:frameTransform(cell,anchor)};
+      return {packet:p,anchor:cell,index:new TriangleIndex(p.positions,p.indices),toCell:frameTransform(anchor,cell),fromCell:frameTransform(cell,anchor)};
     });
   }
+  /** Publish an incremental set atomically; unchanged packets retain their BVHs.
+   * New-cell construction remains bounded to one N<=32 cell per browser frame.
+   * The caller pins support cells before eviction. */
+  syncPackets(packets: readonly TerrainCellPacket[]): void {
+    if(!packets.length||packets.length>this.maxCells) throw new RangeError('Terrain collider capacity exceeded');
+    const key=(p:TerrainCellPacket): string => `${p.id.level}/${p.id.x}/${p.id.y}`;
+    if(new Set(packets.map(key)).size!==packets.length) throw new Error('Duplicate collider cell');
+    const count=packets.reduce((n,p)=>n+p.indices.length/3,0);
+    if(count>COLLISION.maxTriangles) throw new RangeError('Collision budget exceeded');
+    const old=new Map(this.colliders.map(c=>[key(c.packet),c]));
+    const next=packets.map(p=>{
+      if(p.altitudeAuthority!==this.altitudeAuthority ||
+        (p.altitudeAuthority==='preview-only'&&!this.allowPreview) ||
+        (p.altitudeAuthority==='ellipsoidal'&&p.verticalReference!=='ELLIPSOIDAL_WGS84')) throw new Error('INVALID_COLLIDER_AUTHORITY');
+      const previous=old.get(key(p));if(previous?.packet===p)return previous;
+      const cell=createGeoAnchor(p.anchor.geodetic);
+      return {packet:p,anchor:cell,index:new TriangleIndex(p.positions,p.indices),
+        toCell:frameTransform(this.frame,cell),fromCell:frameTransform(cell,this.frame)};
+    });
+    this.colliders=next;this.count=count;
+  }
+  setCapacity(capacity: number): void {
+    if(!Number.isInteger(capacity)||capacity<this.colliders.length||capacity<1||capacity>64) throw new RangeError('Invalid collider capacity');
+    this.maxCells=capacity;
+  }
+  get triangleCount(): number { return this.count; }
   get colliderCount(): number { return this.colliders.length; }
   rebase(anchor: GeoAnchor): void {
     // Prepare every transform before publishing the new frame in one assignment.
     this.colliders=this.colliders.map(c=>({...c,toCell:frameTransform(anchor,c.anchor),fromCell:frameTransform(c.anchor,anchor)}));
+    this.frame=anchor;
   }
-  dispose(): void { this.colliders=[]; }
+  dispose(): void { this.colliders=[];this.count=0; }
   private candidates(points: readonly Vec3[],radius: number): readonly Triangle[]{
     const result: Triangle[]=[];
     for(const c of this.colliders){

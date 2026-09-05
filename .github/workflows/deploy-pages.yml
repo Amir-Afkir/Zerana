@@ -56,6 +56,8 @@ jobs:
         run: python v2/tests/browser/preview_smoke.py
       - name: Validate metric player before publication
         run: python v2/tests/browser/player_smoke.py
+      - name: Validate streaming with mocked provider before publication
+        run: python v2/tests/browser/streaming_smoke.py
       - name: Configure Pages
         uses: actions/configure-pages@v5
       - name: Upload combined Pages artifact
@@ -108,6 +110,11 @@ jobs:
           ZERANA_PLAYER_URL: ${{ needs.deploy.outputs.page_url }}v2/
           ZERANA_EXPECTED_SHA: ${{ github.sha }}
         run: python v2/tests/browser/player_smoke.py
+      - name: Verify published streaming with mocked provider responses
+        env:
+          ZERANA_PREVIEW_URL: ${{ needs.deploy.outputs.page_url }}v2/
+          ZERANA_EXPECTED_SHA: ${{ github.sha }}
+        run: python v2/tests/browser/streaming_smoke.py
       - name: Retain sanitized public verification
         if: always()
         uses: actions/upload-artifact@v4
@@ -116,5 +123,6 @@ jobs:
           path: |
             v2/browser-results/preview/
             v2/browser-results/player/
+            v2/browser-results/streaming/
           retention-days: 7
           if-no-files-found: warn

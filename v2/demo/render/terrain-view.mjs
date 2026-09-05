@@ -56,6 +56,7 @@ export class TerrainView{
     this.animate=now=>{
       if(this.disposed)return;
       const dt=this.previousTime===undefined?0:Math.max(0,(now-this.previousTime)/1000);this.previousTime=now;
+      this.onBeforeFrame?.(dt);
       this.onFrame?.(dt);
       if(this.controls.enabled)this.controls.update();
       this.render();this.frame=requestAnimationFrame(this.animate);
@@ -72,37 +73,9 @@ export class TerrainView{
     this.texture=this.own(checkerTexture());
     this.surfaceMaterial=this.own(new THREE.MeshStandardMaterial({map:this.texture,roughness:1,metalness:0}));
     this.normalMaterial=this.own(new THREE.MeshNormalMaterial());
-    const wireMaterial=this.own(new THREE.LineBasicMaterial({color:0x86c8b6,transparent:true,opacity:0.23}));
-    const borderMaterial=this.own(new THREE.LineBasicMaterial({color:0x90f0cc}));
-    for(const packet of packets){
-      const geometry=this.own(new THREE.BufferGeometry());
-      geometry.setAttribute('position',new THREE.BufferAttribute(packet.positions,3));
-      geometry.setAttribute('normal',new THREE.BufferAttribute(packet.normals,3));
-      geometry.setAttribute('uv',new THREE.BufferAttribute(packet.uvs,2));
-      geometry.setIndex(new THREE.BufferAttribute(packet.indices,1));geometry.computeBoundingBox();geometry.computeBoundingSphere();
-      let surfaceMaterial=this.surfaceMaterial;
-      const image=imagery.get(`${packet.id.level}/${packet.id.x}/${packet.id.y}`);
-      if(image){
-        const texture=this.own(new THREE.DataTexture(image.rgba,image.width,image.width));
-        texture.colorSpace=THREE.SRGBColorSpace;texture.flipY=false;texture.generateMipmaps=false;
-        texture.minFilter=THREE.LinearFilter;texture.magFilter=THREE.LinearFilter;
-        texture.wrapS=texture.wrapT=THREE.ClampToEdgeWrapping;
-        texture.repeat.setScalar(image.uvScale);texture.offset.setScalar(image.uvOffset);texture.needsUpdate=true;
-        surfaceMaterial=this.own(new THREE.MeshStandardMaterial({map:texture,roughness:1,metalness:0}));
-      }
-      const root=new THREE.Group(),mesh=new THREE.Mesh(geometry,surfaceMaterial);
-      const wire=new THREE.LineSegments(this.own(new THREE.WireframeGeometry(geometry)),wireMaterial);
-      const border=[];const n=packet.subdivisions,w=n+1;
-      const add=i=>border.push(packet.positions[i*3],packet.positions[i*3+1],packet.positions[i*3+2]);
-      for(let col=0;col<=n;col++)add(col);
-      for(let row=1;row<=n;row++)add(row*w+n);
-      for(let col=n-1;col>=0;col--)add(n*w+col);
-      for(let row=n-1;row>0;row--)add(row*w);
-      const edgeGeometry=this.own(new THREE.BufferGeometry());edgeGeometry.setAttribute('position',new THREE.Float32BufferAttribute(border,3));
-      root.add(mesh,wire,new THREE.LineLoop(edgeGeometry,borderMaterial));
-      applyFrame(root,frameTransform(packet.anchor,world));this.patchRoot.add(root);
-      this.cellViews.push({packet,root,mesh,wire,surfaceMaterial});
-    }
+    const wireMaterial=this.wireMaterial=this.own(new THREE.LineBasicMaterial({color:0x86c8b6,transparent:true,opacity:0.23}));
+    const borderMaterial=this.borderMaterial=this.own(new THREE.LineBasicMaterial({color:0x90f0cc}));
+    for(const packet of packets)this.addCell(packet,imagery.get(`${packet.id.level}/${packet.id.x}/${packet.id.y}`));
     this.markerAnchor=createGeoAnchor(ecefToGeodetic(markerEcef));this.markerRoot=new THREE.Group();
     const capsule=new THREE.Mesh(this.own(new THREE.CapsuleGeometry(0.25,MARKER_HEIGHT_METERS-0.5,4,12)),
       this.own(new THREE.MeshStandardMaterial({color:0xffc768,roughness:0.7})));
@@ -113,7 +86,50 @@ export class TerrainView{
     applyFrame(this.markerRoot,frameTransform(this.markerAnchor,world));this.patchRoot.add(this.markerRoot);
     this.scene.updateMatrixWorld(true);
   }
+  addCell(packet,imagePacket){
+    if(this.cellViews.some(c=>c.packet.id.level===packet.id.level&&c.packet.id.x===packet.id.x&&c.packet.id.y===packet.id.y))throw new Error('DUPLICATE_RENDER_CELL');
+    const resources=new Set();
+    const own=resource=>{resources.add(resource);this.own(resource);return resource;};
+    try{
+      const geometry=own(new THREE.BufferGeometry());
+      geometry.setAttribute('position',new THREE.BufferAttribute(packet.positions,3));
+      geometry.setAttribute('normal',new THREE.BufferAttribute(packet.normals,3));
+      geometry.setAttribute('uv',new THREE.BufferAttribute(packet.uvs,2));
+      geometry.setIndex(new THREE.BufferAttribute(packet.indices,1));geometry.computeBoundingBox();geometry.computeBoundingSphere();
+      let surfaceMaterial=this.surfaceMaterial;
+      const image=imagePacket;
+      if(image){
+        const texture=own(new THREE.DataTexture(image.rgba,image.width,image.width));
+        texture.colorSpace=THREE.SRGBColorSpace;texture.flipY=false;texture.generateMipmaps=false;
+        texture.minFilter=THREE.LinearFilter;texture.magFilter=THREE.LinearFilter;
+        texture.wrapS=texture.wrapT=THREE.ClampToEdgeWrapping;
+        texture.repeat.setScalar(image.uvScale);texture.offset.setScalar(image.uvOffset);texture.needsUpdate=true;
+        surfaceMaterial=own(new THREE.MeshStandardMaterial({map:texture,roughness:1,metalness:0}));
+      }
+      const root=new THREE.Group(),mesh=new THREE.Mesh(geometry,surfaceMaterial);
+      const wire=new THREE.LineSegments(own(new THREE.WireframeGeometry(geometry)),this.wireMaterial);
+      const border=[];const n=packet.subdivisions,w=n+1;
+      const add=i=>border.push(packet.positions[i*3],packet.positions[i*3+1],packet.positions[i*3+2]);
+      for(let col=0;col<=n;col++)add(col);
+      for(let row=1;row<=n;row++)add(row*w+n);
+      for(let col=n-1;col>=0;col--)add(n*w+col);
+      for(let row=n-1;row>0;row--)add(row*w);
+      const edgeGeometry=own(new THREE.BufferGeometry());edgeGeometry.setAttribute('position',new THREE.Float32BufferAttribute(border,3));
+      root.add(mesh,wire,new THREE.LineLoop(edgeGeometry,this.borderMaterial));
+      applyFrame(root,frameTransform(packet.anchor,this.world));this.patchRoot.add(root);
+      this.cellViews.push({packet,root,mesh,wire,surfaceMaterial,resources});
+      this.setModes(this.modes || {wireframe:true,normals:false,metricGrid:false});
+    }catch(error){for(const resource of resources){resource.dispose();this.resources.delete(resource);}throw error;}
+  }
+  removeCell(id){
+    const cell=this.cellViews.find(c=>c.packet.id.level===id.level&&c.packet.id.x===id.x&&c.packet.id.y===id.y);
+    if(!cell)return;
+    cell.root.removeFromParent();
+    for(const resource of cell.resources){resource.dispose();this.resources.delete(resource);}
+    this.cellViews=this.cellViews.filter(c=>c!==cell);
+  }
   setModes({wireframe,normals,metricGrid}){
+    this.modes={wireframe,normals,metricGrid};
     for(const cell of this.cellViews){cell.wire.visible=wireframe;cell.mesh.material=normals?this.normalMaterial:cell.surfaceMaterial;}
     if(this.grid)this.grid.visible=metricGrid;
   }

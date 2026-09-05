@@ -8,8 +8,9 @@ Une PR ouverte ou une compilation réussie ne prouve pas une publication fonctio
 
 - Prototype V1 : `0e06c350b6c3d07699600e0003609790d60661c4`, branche `legacy/v1`.
 - Première préversion V2 publiée : `07ac40b699d2f200e1dd21b3f4900c9d0be827fd`.
+- Joueur V2 publié avant streaming : `f567ee65ce5db8a68743823acbf2472e4cd3f99e`.
 - Jeu historique : `/Zerana/` ; laboratoire indépendant : `/Zerana/v2/`.
-- Les sources V1, assets historiques et lockfiles ne sont pas modifiés par l'étape 5.
+- Les sources V1, assets historiques et lockfiles ne sont pas modifiés par les étapes 5–6.
 - Le build combiné compare les sources V1 à la baseline et conserve les empreintes
   des fichiers V1 lors de l'ajout du laboratoire.
 - La copie locale du Mac n'est pas modifiée par ces interventions.
@@ -62,24 +63,54 @@ patch. Ce garde-fou n'est pas une preuve de couverture de polygones arbitraires.
 La marche Mapbox exige l'opt-in existant et reste expérimentale, `preview-only`.
 La construction des colliders utilise encore la résolution du mesh installé.
 
-33 nouveaux tests CPU ont passé dans l'environnement de travail. La CI exécute les
-213 tests cumulés sur Node 22/24, les anciens parcours navigateur et le nouveau
-scénario clavier/souris. Le statut exact du dernier SHA et du déploiement est
-consigné dans la PR #5, et ne doit pas être déduit de la seule présence des tests.
-Le navigateur local bloque HTTP ; les preuves navigateur proviennent de GitHub
-Actions, sous Chromium/SwiftShader. Voir `REFONTE_STAGE5.md` et ADR-005.
+La CI de l'étape 5 a validé 213 tests cumulés sur Node 22/24, dont 33 tests joueur.
+Le déploiement `33982200996` a validé dix scénarios joueur sur la version publiée,
+sans appel fournisseur. Les preuves et limites sont consignées dans la PR #5,
+commentaire `5553696022`. Chromium/SwiftShader n'est pas un GPU matériel.
+Voir `REFONTE_STAGE5.md` et ADR-005.
+
+### Étape 6 — première tranche de streaming, PR #6 / Milestone 5
+
+Fenêtres autour du joueur en mètres ECEF sur empreintes h=0 WGS84, prédiction,
+rétention, ordonnanceur déterministe, révisions anti-ABA, workers et buffers
+transférables. Ajouts/retraits incrémentaux des meshes et colliders ; les BVH
+existants sont conservés. Le petit patch de spawn reste épinglé pour la réapparition.
+
+64 cellules au plus ; deux workers synthétiques ou un worker Mapbox ; file et
+réservations CPU limitées à 4 Mio. Cache CPU LRU et cache synthétique IndexedDB
+optionnel ; Mapbox reste seulement en mémoire, preview-only, avec consentement
+séparé et 256 tentatives HTTP supplémentaires au maximum par activation.
+Le streaming est désactivé par défaut et s'active dans le panneau Monde continu.
+
+32 nouveaux tests CPU passent localement ; les tests incluent 5 000 fenêtres
+virtuelles et six minutes simulées de marche (>2,5 km) avec renouvellement des
+cellules. La CI du commit `c82a231bdcb7d439b33f5bb7ca252a01f64c1f2a`, run
+`33985087448`, a réussi sur Node 22/24, au build V1 et dans les parcours navigateur.
+Le test de streaming utilise de vrais workers, IndexedDB et clavier, mais des
+réponses Mapbox simulées. Il a observé 12 cellules ajoutées, 6 libérées et le
+maintien du support après traversée du patch initial.
+
+Ce premier parcours a aussi mesuré un `maxCommitMs` de 87,7 ms : l'intégration
+sur le fil principal doit encore être optimisée. Le seuil de 4 ms n'est pas un
+plafond préemptif. Ce constat ne doit pas être remplacé par une promesse de 60 FPS.
+Les résultats exacts du dernier SHA et de sa publication sont consignés dans la
+PR #6 ; les tests sont aussi ajoutés aux contrôles avant/après déploiement.
+Voir `REFONTE_STAGE6.md` et ADR-006 pour le périmètre mathématique et les limites.
 
 ## Ce qui reste à développer ou valider
 
-- Streaming continu, workers, ordonnanceur, cache et sécurité des cellules futures.
-- Sélection de résolution physique indépendante du LOD visuel, transitions de LOD.
+- Finir le Milestone 5 : réduire les pics d'intégration, confirmer les sessions
+  navigateur prolongées et le plateau mémoire global, valider le streaming live.
+- Progression multicouche et terrain parent de secours ; LOD mixte et transitions.
+- Sélection de résolution physique indépendante du LOD visuel.
 - Routes, eau, landcover, bâtiments, arbres et décoration procédurale V2.
 - Avatar animé, escaliers automatiques, tactile/gamepad et corps rigides généraux.
 - Référentiel vertical réel canonique et conversion géoïde justifiée.
-- Tests longs de mémoire, performances GPU matérielles et validation Safari.
+- Performances GPU matérielles et validation Safari.
 - Le build racine signale des dépendances vulnérables préexistantes ; leur impact
   n'est pas évalué dans cette tranche et nécessite une revue dédiée, sans mise à
   jour automatique des lockfiles historiques.
 
-Prochain jalon : **Milestone 5 — streaming progressif**, avant les couches vectorielles.
+Le streaming fonctionne comme préversion expérimentale ; le DoD complet du
+Milestone 5 n'est pas déclaré terminé. Les couches vectorielles viennent ensuite.
 Les 60 Hz de simulation ne constituent pas une promesse de 60 images par seconde.

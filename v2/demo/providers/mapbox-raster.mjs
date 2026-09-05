@@ -84,7 +84,9 @@ async function decodePixels(payload, id, layer) {
       colorSpaceConversion: layer === 'elevation' ? 'none' : 'default', premultiplyAlpha: 'none', imageOrientation: 'none',
     });
     if (bitmap.width !== size || bitmap.height !== size) throw new Error('Unexpected tile dimensions');
-    const canvas = document.createElement('canvas'); canvas.width = size; canvas.height = size;
+    const canvas = typeof OffscreenCanvas !== 'undefined' && typeof document === 'undefined'
+      ? new OffscreenCanvas(size, size) : document.createElement('canvas');
+    canvas.width = size; canvas.height = size;
     const context = canvas.getContext('2d', { willReadFrequently: true, colorSpace: 'srgb' });
     if (!context) throw new Error('Canvas decoding unavailable');
     context.imageSmoothingEnabled = false; context.drawImage(bitmap, 0, 0);
@@ -97,7 +99,7 @@ async function sha256(bytes) {
   return [...hash].map(value => value.toString(16).padStart(2, '0')).join('');
 }
 /** Session-scoped, bounded parallel loading. No persistence, token storage or background prefetch. */
-export async function loadMapboxPatch({ cells, subdivisions, token, allowPreview, signal, onProgress = () => {} }) {
+export async function loadMapboxPatch({ cells, subdivisions, token, allowPreview, signal, onProgress = () => {}, byteCache = null, onHttpAttempt = () => {} }) {
   if (allowPreview !== true) throw new Error('VERTICAL_DATUM_UNRESOLVED — active explicitement l’aperçu approximatif.');
   aborted(signal);
   if (!cells.length || cells.some(cell => cell.level !== cells[0].level)) throw new Error('One patch level required');
@@ -112,12 +114,21 @@ export async function loadMapboxPatch({ cells, subdivisions, token, allowPreview
   const session = new AbortController(), stop = () => session.abort();
   signal.addEventListener('abort', stop, { once: true }); aborted(signal);
   const heights = [], colours = [], evidence = [], attributions = []; let cursor = 0, completed = 0, failure, httpAttempts = 0;
-  const onAttempt = () => { httpAttempts++; };
+  const onAttempt = () => { onHttpAttempt(); httpAttempts++; };
+  const cachedRequest = async (url, signal, elevation, onAttempt) => {
+    // This cache is session-scoped and bound to one public-token/provider config.
+    // Neither the key nor persisted diagnostics contain the query/token.
+    const key = new URL(url).pathname, hit = byteCache?.get(key);
+    if (hit) { aborted(signal); return hit; }
+    const payload = await requestBytes(url, signal, elevation, onAttempt);
+    byteCache?.set(key, payload, payload.bytes.byteLength + 256);
+    return payload;
+  };
   try {
     // Attribution is part of each provider response contract. It is never inserted as raw HTML.
     for (const layer of ['elevation', 'imagery']) {
       const config = MAPBOX_RASTER[layer];
-      const metadata = await requestBytes(`https://api.mapbox.com/v4/${config.tileset}.json?access_token=${encodeURIComponent(token)}`, session.signal, false, onAttempt);
+      const metadata = await cachedRequest(`https://api.mapbox.com/v4/${config.tileset}.json?access_token=${encodeURIComponent(token)}`, session.signal, false, onAttempt);
       let json; try { json = JSON.parse(new TextDecoder().decode(metadata.bytes)); } catch { throw new Error('Invalid provider metadata'); }
       if (typeof json.attribution !== 'string' || !json.attribution.trim()) throw new Error('Provider attribution unavailable');
       attributions.push(json.attribution);
@@ -126,7 +137,7 @@ export async function loadMapboxPatch({ cells, subdivisions, token, allowPreview
       try {
         while (cursor < tasks.length) {
           aborted(session.signal); const task = tasks[cursor++];
-          const payload = await requestBytes(mapboxTileUrl(task.layer, task.id, token), session.signal, task.layer === 'elevation', onAttempt);
+          const payload = await cachedRequest(mapboxTileUrl(task.layer, task.id, token), session.signal, task.layer === 'elevation', onAttempt);
           const data = await decodePixels(payload, task.id, task.layer); aborted(session.signal);
           (task.layer === 'elevation' ? heights : colours).push(data);
           evidence.push({ layer: task.layer, tile: tileKey(task.id), sha256: await sha256(payload.bytes), waterFallback: payload.water });
