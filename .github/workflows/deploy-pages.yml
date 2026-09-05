@@ -54,6 +54,8 @@ jobs:
           python -m playwright install --with-deps chromium
       - name: Validate combined site without real provider calls
         run: python v2/tests/browser/preview_smoke.py
+      - name: Validate metric player before publication
+        run: python v2/tests/browser/player_smoke.py
       - name: Configure Pages
         uses: actions/configure-pages@v5
       - name: Upload combined Pages artifact
@@ -101,11 +103,18 @@ jobs:
           # Ordinary pushes make no Mapbox calls. workflow_dispatch is opt-in as well.
           ZERANA_LIVE_MAPBOX: ${{ (github.event.inputs.verify_live_mapbox == 'true' || contains(github.event.head_commit.message, '[verify-mapbox]')) && '1' || '0' }}
         run: python v2/tests/browser/preview_smoke.py
+      - name: Verify published player without provider calls
+        env:
+          ZERANA_PLAYER_URL: ${{ needs.deploy.outputs.page_url }}v2/
+          ZERANA_EXPECTED_SHA: ${{ github.sha }}
+        run: python v2/tests/browser/player_smoke.py
       - name: Retain sanitized public verification
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: published-preview-verification
-          path: v2/browser-results/preview/
+          path: |
+            v2/browser-results/preview/
+            v2/browser-results/player/
           retention-days: 7
           if-no-files-found: warn

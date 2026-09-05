@@ -1,63 +1,85 @@
 # État de la refonte Zerana V2
 
-## Baseline protégée
+Ce document décrit le code présent. Pour identifier la version effectivement publiée,
+consulter le manifeste servi par Pages et le dernier workflow de déploiement réussi.
+Une PR ouverte ou une compilation réussie ne prouve pas une publication fonctionnelle.
 
-- Commit de départ : `0e06c350b6c3d07699600e0003609790d60661c4`.
-- Sauvegarde Git distante : `legacy/v1`.
-- Noyau initial : `feature/v2-geo-kernel`, PR #1.
-- Tranche terrain : `feature/v2-synthetic-terrain`, basée sur `dd1c533e928f16d65633a3d31cc711dda3076eb7`.
+## Baselines et protection
+
+- Prototype V1 : `0e06c350b6c3d07699600e0003609790d60661c4`, branche `legacy/v1`.
+- Première préversion V2 publiée : `07ac40b699d2f200e1dd21b3f4900c9d0be827fd`.
+- Jeu historique : `/Zerana/` ; laboratoire indépendant : `/Zerana/v2/`.
+- Les sources V1, assets historiques et lockfiles ne sont pas modifiés par l'étape 5.
+- Le build combiné compare les sources V1 à la baseline et conserve les empreintes
+  des fichiers V1 lors de l'ajout du laboratoire.
+- La copie locale du Mac n'est pas modifiée par ces interventions.
 - Référence fournie : `ZERANA_ARCHITECTURE_REFERENCE(1).md`, version 1.0.0.
-- SHA-256 du fichier fourni : `8fa7d13540eef938c423a83fc6e207743e48e9c9c9c33432eb10979979ce56f8`.
-- Le moteur racine, ses assets, ses dépendances et son déploiement ne sont pas remplacés.
-- La copie locale du Mac n'est pas modifiée.
+- SHA-256 de cette référence : `8fa7d13540eef938c423a83fc6e207743e48e9c9c9c33432eb10979979ce56f8`.
+- Copie normative inchangée : `architecture/ZERANA_WORLD_ENGINE.md`.
 
-## Première tranche — noyau
+## Fonctionnalités implémentées
 
-Implémenté dans `v2/src/geo/` : unités typées, WGS84, conversions ECEF/ENU,
-repère Three, transformations d'origine flottante, Mercator et IDs de cellules.
-Les 80 tests existants et les fixtures PROJ sont conservés, sans changement du noyau.
-La première CI avait validé Node 22/24 et la compilation du jeu existant.
+### Étape 1 — noyau géospatial, PR #1
 
-## Deuxième tranche — terrain synthétique
+Unités typées, WGS84, ECEF/ENU, axes Three Est/Haut/Sud, transformations rigides
+et cellules Mercator. 80 tests, dont fixtures indépendantes PROJ et changements
+successifs de repère. Le noyau ne dépend ni du navigateur ni de Three.js.
 
-Implémenté : source synthétique ellipsoïdale explicite, cache de samples borné,
-grille canonique dyadique, vertices et normales avec halo, packets CPU,
-génération de 1/4/9 cellules, métriques de raccord, démo Three.js isolée.
-Le déplacement de l'origine transforme la caméra et les racines sans recréer
-les buffers. La capsule de 1,80 m est un repère, pas un joueur physique.
+### Étape 2 — terrain synthétique, PR #2
 
-59 nouveaux tests terrain ont été exécutés dans l'environnement de travail,
-avec 24 références ECEF indépendantes produites par PROJ 9.5.1 / pyproj 3.7.2.
-Les fichiers du noyau utilisés localement ont été vérifiés par leurs blobs Git.
-Les nouveaux tests couvrent notamment winding, UV, cache, indices Uint32,
-antiméridien, limites Mercator, ordre de génération et 100 changements de repère.
+Source ellipsoïdale synthétique, grille dyadique canonique, samples et normales avec
+halo, paquets CPU et patches 1/4/9 cellules. Les 59 tests terrain ajoutés couvrent
+notamment raccords, UV, winding, indices Uint32, cache, antiméridien et rebases.
+Voir ADR-002 pour le domaine de précision testé ; aucun résultat échantillonné
+n'est présenté comme une borne globale ou une mesure GPU matérielle.
 
-Contrôle supplémentaire sur six zones, 9 cellules L15/N32 :
-- écart maximal de raccord, vertices Float32 et transforms CPU Float64 : 0,00006102 m ;
-- estimation illustrative des opérations Float32 : 0,00037129 m.
-Ce sont des résultats échantillonnés, pas une preuve globale ni une mesure de GPU.
+### Étape 3 — relief raster et imagerie, PR #3
 
-La CI de cette branche vérifie les 80 + 59 tests sur Node 22/24, le build du jeu
-existant et la démo sous `/Zerana/v2/` avec Chromium/SwiftShader. Elle conserve
-captures et résultats en artifact. Le résultat effectif de chaque commit et ses
-limites sont consignés dans la PR ; un workflow ajouté n'est pas considéré comme
-réussi tant que son exécution n'est pas terminée.
+Terrain-RGB décodé avant interpolation, centres de pixels, voisins inter-tuiles,
+budgets, nodata et textures géoréférencées. 32 tests raster ajoutés. Le provider
+Mapbox possède annulation, timeout, retry borné, attribution et provenance.
+Le datum vertical mixte Mapbox reste `UNRESOLVED_DATUM_PREVIEW`, pas du WGS84 certifié.
 
-## Ce qui n'est PAS terminé
+### Étape 4 — préversion publique isolée, PR #4
 
-- Aucun terrain réel DEM/satellite n'est encore branché en V2.
-- Pas de contrôleur joueur, collider ou runtime physique rebasé.
-- Pas de streaming, workers, cache persistant, LOD mixte ou couches vectorielles V2.
-- Les patches synchrones ne démontrent pas la fluidité en déplacement.
-- Les cycles de destruction navigateur ne remplacent pas un test de plusieurs heures.
-- Aucun benchmark GPU matériel ni support de tous les navigateurs n'est revendiqué.
-- Aucun nouveau jeu V2 n'est publié par cette branche.
+Les PR #1–#4 sont intégrées. Build composé V1/V2, SHA servi et contrôles HTTP/navigateur.
+Neuf tests de livraison ajoutés. Le workflow `33978882824` a validé le déploiement
+initial et un seul patch Mapbox réel de neuf cellules : 31 tentatives HTTP, aucun
+échec HTTP ou exception JavaScript observé dans ce scénario. Le compte rendu et
+les limites sont consignés dans la PR #4, commentaire `5553308822`.
+Cela ne certifie ni l'altitude absolue, ni la couverture mondiale, ni les performances.
 
-## Suite
+### Étape 5 — joueur métrique, PR #5 / Milestone 4 de la référence
 
-Après validation de cette tranche : contrat d'élévation réelle et de son datum,
-échantillonnage raster testé, puis imagerie géoréférencée. Ne pas brancher le
-streaming ou les façades avant d'avoir validé cette superposition.
+Joueur ECEF unique, capsule 1,80 m à échelle constante, marche/course, saut, caméra
+avec collision, simulation fixe 60 Hz et interpolation. Colliders triangle/BVH
+indépendants des buffers visuels, balayage continu borné, glissement et pentes.
+Origine flottante appliquée aux poses et aux transformations des colliders, sans
+reconstruire leurs sommets. Pause sur blur/onglet caché, réapparition et nettoyage.
 
-Formules et limites : `adr/ADR-002-synthetic-terrain-patches.md`.
-Utilisation de la démo : `../v2/demo/README.md`.
+La marche reste limitée au terrain déjà chargé ; neuf sondes protègent le bord du
+patch. Ce garde-fou n'est pas une preuve de couverture de polygones arbitraires.
+La marche Mapbox exige l'opt-in existant et reste expérimentale, `preview-only`.
+La construction des colliders utilise encore la résolution du mesh installé.
+
+33 nouveaux tests CPU ont passé dans l'environnement de travail. La CI exécute les
+213 tests cumulés sur Node 22/24, les anciens parcours navigateur et le nouveau
+scénario clavier/souris. Le statut exact du dernier SHA et du déploiement est
+consigné dans la PR #5, et ne doit pas être déduit de la seule présence des tests.
+Le navigateur local bloque HTTP ; les preuves navigateur proviennent de GitHub
+Actions, sous Chromium/SwiftShader. Voir `REFONTE_STAGE5.md` et ADR-005.
+
+## Ce qui reste à développer ou valider
+
+- Streaming continu, workers, ordonnanceur, cache et sécurité des cellules futures.
+- Sélection de résolution physique indépendante du LOD visuel, transitions de LOD.
+- Routes, eau, landcover, bâtiments, arbres et décoration procédurale V2.
+- Avatar animé, escaliers automatiques, tactile/gamepad et corps rigides généraux.
+- Référentiel vertical réel canonique et conversion géoïde justifiée.
+- Tests longs de mémoire, performances GPU matérielles et validation Safari.
+- Le build racine signale des dépendances vulnérables préexistantes ; leur impact
+  n'est pas évalué dans cette tranche et nécessite une revue dédiée, sans mise à
+  jour automatique des lockfiles historiques.
+
+Prochain jalon : **Milestone 5 — streaming progressif**, avant les couches vectorielles.
+Les 60 Hz de simulation ne constituent pas une promesse de 60 images par seconde.
