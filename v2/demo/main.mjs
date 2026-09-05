@@ -1,6 +1,8 @@
 import './style.css';
 import './providers.css';
 import './preview.css';
+import './experience.css';
+import { renderAttribution } from './attribution.mjs';
 import { isPublicMapboxToken, resolveMapboxToken } from './site-token.mjs';
 import { loadMapboxPatch } from './providers/mapbox-raster.mjs';
 import { geodeticDegrees, geodeticRadians } from '../src/geo/geodetic.ts';
@@ -20,6 +22,8 @@ import { PlayerSession } from './runtime/player-session.mjs';
 const $ = id => document.getElementById(id);
 const siteToken = String(import.meta.env.VITE_MAPBOX_API_KEY || '').trim();
 const buildSha = String(import.meta.env.VITE_BUILD_SHA || 'local');
+const manualMode = new URLSearchParams(location.search).get('lab') === 'manual';
+const credits = new Set();
 const places = { paris:[2.35,48.86],equator:[0,0],tanger:[-5.81,35.76],tokyo:[139.69,35.68],antimeridian:[179.99999,35],north:[0,85] };
 let view, playerSession, streamSession, packets=[], world, revision=0, rebases=0, sourceId='', cacheSize=0, busy=false, loadController=null, requestRevision=0, providerReport=null;
 function status(message,error=false){$('status').textContent=message;$('status').classList.toggle('error',error);}
@@ -34,24 +38,15 @@ function refreshMetrics(){
   }));
   window.__ZERANA_TERRAIN_DEBUG__={buildSha,siteTokenConfigured:isPublicMapboxToken(siteToken),revision,rebases,cellCount:packets.length,sourceId,seams,providerReport,...snapshot};
 }
-function modes(){view.setModes({wireframe:$('wireframe').checked,normals:$('normals').checked,metricGrid:$('metric-grid').checked});}
+function modes(){view.setModes({wireframe:$('wireframe').checked,normals:$('normals').checked,metricGrid:$('metric-grid').checked});$('uv-legend').hidden=$('source-mode').value==='mapbox'||!$('wireframe').checked;}
 
 function attribution(values){
-  const container=$('provider-attribution');container.replaceChildren();
-  for(const value of values){
-    const parsed=new DOMParser().parseFromString(value,'text/html');
-    // Provider HTML is untrusted: copy text and safe HTTPS links only, no attributes or scripts.
-    for(const node of parsed.body.childNodes){
-      if(node.nodeType===Node.TEXT_NODE){container.append(document.createTextNode(node.textContent));continue;}
-      if(node.nodeName==='A'){
-        try{const url=new URL(node.getAttribute('href'));if(url.protocol!=='https:')continue;
-          const a=document.createElement('a');a.href=url.href;a.textContent=node.textContent;a.rel='noopener noreferrer';a.target='_blank';container.append(a,document.createTextNode(' '));
-        }catch{/* invalid link omitted */}
-      }
-    }
-  }
+  for(const value of values)credits.add(value);
+  renderAttribution($('provider-attribution'),[...credits]);
 }
 async function build(){
+  const autoExplore = $('auto-explore').checked;
+  let completed=false;
   playerSession?.setLoading(true);
   loadController?.abort();
   const request=++requestRevision,controller=new AbortController();loadController=controller;
@@ -85,18 +80,38 @@ async function build(){
     providerReport=result?{snapshotId:result.snapshotId,elevationZoom:result.elevationZoom,imageryZoom:result.imageryZoom,
       requestCount:result.requestCount,waterFallbackCount:result.waterFallbackCount,evidence:result.evidence,
       verticalReference:source.verticalReference,accuracy:'not-certified'}:null;
-    $('source-badge').textContent=isMapbox?'MAPBOX · DATUM NON RÉSOLU · APERÇU APPROXIMATIF':'SYNTHÉTIQUE · 1 UNITÉ = 1 MÈTRE';
+    $('source-badge').textContent=isMapbox?'MAPBOX · RELIEF APPROXIMATIF':'SYNTHÉTIQUE · 1 UNITÉ = 1 MÈTRE';
     $('source-badge').classList.toggle('preview-warning',isMapbox);
-    $('attribution').hidden=!isMapbox;$('uv-legend').hidden=isMapbox;
-    if(result)attribution(result.attributions);
-    revision++;rebases=0;modes();view.overview();view.render();refreshMetrics();
+    $('attribution').hidden=!isMapbox;$('uv-legend').hidden=isMapbox||!$('wireframe').checked;
+    credits.clear();if(result)attribution(result.attributions);
+    revision++;rebases=0;modes();view.overview();view.render();refreshMetrics();completed=true;
     document.body.dataset.ready=String(revision);
-    status(isMapbox?'Satellite et relief reçus. Altitudes source non certifiées WGS84.':'Scène prête. Relief synthétique, aucun fournisseur externe.');
+    status(isMapbox?'Satellite et relief reçus. Altitudes source non certifiées WGS84.':'Prêt. Terrain de test, sans appel fournisseur.');
   }catch(error){if(request===requestRevision)status(error.name==='AbortError'?'Chargement annulé ; scène précédente conservée.':error.message,true);}
-  finally{if(request===requestRevision){busy=false;$('build').disabled=false;$('cancel-load').hidden=true;playerSession?.setLoading(false);}}
+  finally{if(request===requestRevision){
+    busy=false;$('build').disabled=false;$('cancel-load').hidden=true;playerSession?.setLoading(false);
+    if(completed&&autoExplore){
+      streamSession.$('stream-network-consent').checked=isMapbox;
+      streamSession.start();playerSession.start({focus:false});
+      status(streamSession.active?'Prêt : streaming actif. Utilise les touches pour avancer.':'Terrain prêt ; consulte les outils pour le streaming.');
+    }
+  }}
 }
 
 try{
+  $('auto-explore').checked=!manualMode;
+  $('world-options').open=manualMode;$('diagnostics').open=manualMode;
+  $('wireframe').checked=manualMode;
+  if(!manualMode){
+    $('source-mode').value=isPublicMapboxToken(siteToken)?'mapbox':'synthetic';
+    $('allow-preview').checked=true;$('profile').value='flat';
+  }
+  if(!manualMode){
+    const params=new URLSearchParams(location.search);
+    if(['synthetic','mapbox'].includes(params.get('source')))$('source-mode').value=params.get('source');
+    if(['15','17','19','21'].includes(params.get('level')))$('level').value=params.get('level');
+  }
+  $('provider-options').hidden=$('source-mode').value!=='mapbox';
   $('build-version').textContent=`Préversion · ${buildSha.slice(0,12)}`;
   $('site-token-state').textContent=isPublicMapboxToken(siteToken)?'Token public du site disponible ; laisse ce champ vide pour l’utiliser.':'Aucun token de site configuré ; saisis ton token public.';
   view=new TerrainView($('viewport'),error=>status(error,true));
@@ -106,11 +121,15 @@ try{
   streamSession=new StreamSession(view,playerSession,(next,attributions)=>{
     packets=next;if(attributions?.length)attribution(attributions);refreshMetrics();
   });
-  $('source-mode').addEventListener('change',()=>{streamSession.stop();$('provider-options').hidden=$('source-mode').value!=='mapbox';loadController?.abort();});
+  $('runtime-tools').append(playerSession.panel,streamSession.panel);
+  playerSession.autoResume=!manualMode;
+  $('auto-explore').addEventListener('change',()=>{playerSession.autoResume=$('auto-explore').checked;});
+  modes();
+  $('source-mode').addEventListener('change',()=>{streamSession.stop();$('provider-options').hidden=$('source-mode').value!=='mapbox';loadController?.abort();if(!manualMode)void build();});
   $('cancel-load').addEventListener('click',()=>loadController?.abort());
   $('controls').addEventListener('submit',event=>{event.preventDefault();void build();});
   $('place').addEventListener('change',()=>{
-    const [lon,lat]=places[$('place').value];$('longitude').value=lon;$('latitude').value=lat;
+    const [lon,lat]=places[$('place').value];$('longitude').value=lon;$('latitude').value=lat;if(!manualMode)void build();
   });
   for(const name of ['wireframe','normals','metric-grid'])$(name).addEventListener('change',()=>{modes();view.render();refreshMetrics();});
   $('overview').addEventListener('click',()=>{playerSession.pause();view.overview();view.render();refreshMetrics();});

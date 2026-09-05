@@ -1,3 +1,4 @@
+import { TriangleIndex } from '../../src/physics/geometry.ts';
 import { buildTerrainCell } from '../../src/generation/terrain/terrain-builder.ts';
 import { TerrainSampler } from '../../src/generation/terrain/terrain-sampler.ts';
 import { syntheticElevation } from '../../src/generation/terrain/synthetic-elevation.ts';
@@ -19,22 +20,35 @@ self.onmessage = async ({data}) => {
       ![16,32].includes(job.subdivisions)) throw new Error('INVALID_STREAM_JOB');
     if(job.source==='mapbox' && (!Number.isSafeInteger(job.httpGrant) || job.httpGrant<0 || job.httpGrant>256))
       throw new Error('STREAM_HTTP_BUDGET');
+    if (job.layer === 'imagery') {
+      if (job.source !== 'mapbox') throw new Error('INVALID_STREAM_JOB');
+      const result = await loadMapboxPatch({cells:[job.id],subdivisions:job.subdivisions,token:job.token,
+        allowPreview:job.allowPreview,signal:controller.signal,byteCache,layers:'imagery',
+        onHttpAttempt:()=>{if(attempts>=job.httpGrant)throw new Error('STREAM_HTTP_BUDGET');attempts++;}});
+      const texture = result.textures.get(`${job.id.level}/${job.id.x}/${job.id.y}`);
+      if (controller.signal.aborted) throw new DOMException('Cancelled','AbortError');
+      self.postMessage({kind:'result',ticket,texture,attributions:result.attributions,evidence:result.evidence,
+        attempts,sourceCacheBytes:byteCache.bytes},[texture.rgba.buffer]);
+      return;
+    }
     disk ||= new IndexedPacketCache(job.persistent===true);
     let bundle=await disk.get(job),cacheHit=!!bundle;
     if(!bundle) {
       const result=job.source==='mapbox' ? await loadMapboxPatch({cells:[job.id],subdivisions:job.subdivisions,
-        token:job.token,allowPreview:job.allowPreview,signal:controller.signal,byteCache,
+        token:job.token,allowPreview:job.allowPreview,signal:controller.signal,byteCache,layers:job.layer==='terrain'?'terrain':'all',
         onHttpAttempt:()=>{if(attempts>=job.httpGrant)throw new Error('STREAM_HTTP_BUDGET');attempts++;}}) : null;
       const source=result?.source||syntheticElevation(job.profile);
       const sampler=new TerrainSampler(source,undefined,{allowUnresolvedDatumPreview:job.allowPreview===true});
       const packet=buildTerrainCell(job.id,sampler,job.subdivisions);sampler.clear();
       bundle={packet,texture:result?.textures.get(`${job.id.level}/${job.id.x}/${job.id.y}`)||null,
         evidence:result?.evidence||[],attributions:result?.attributions||[],snapshotId:result?.snapshotId||source.id};
+      bundle.collider = new TriangleIndex(packet.positions,packet.indices).snapshot();
       validatePacket(bundle,job);
       if(!controller.signal.aborted) await disk.put(job,bundle);
     }
     if(controller.signal.aborted) throw new DOMException('Cancelled','AbortError');
     validatePacket(bundle,job);
+    if (!bundle.collider) throw new Error('INVALID_PREPARED_COLLIDER');
     self.postMessage({kind:'result',ticket,bundle,attempts,cacheHit,
       generationMs:performance.now()-started,sourceCacheBytes:byteCache.bytes},transferBuffers(bundle));
   } catch(error) {

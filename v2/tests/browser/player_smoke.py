@@ -57,7 +57,7 @@ async def run(url):
             await page.wait_for_function('(n) => window.__ZERANA_TERRAIN_DEBUG__.revision > n && !document.getElementById("build").disabled', arg=previous, timeout=45000)
             assert (await snapshot())['available'], await page.inner_text('#player-status')
         try:
-            await page.goto(url, wait_until='networkidle')
+            await page.goto(url + ('&' if '?' in url else '?') + 'lab=manual', wait_until='networkidle')
             await page.wait_for_function('document.body.dataset.ready === "1"')
             if os.environ.get('ZERANA_EXPECTED_SHA'):
                 assert await page.evaluate('window.__ZERANA_TERRAIN_DEBUG__.buildSha') == os.environ['ZERANA_EXPECTED_SHA']

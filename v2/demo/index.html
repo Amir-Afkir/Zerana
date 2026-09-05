@@ -4,69 +4,70 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <link rel="icon" href="data:," />
-  <title>Zerana V2 — Laboratoire terrain</title>
+  <title>Zerana V2 — Explorer</title>
 </head>
 <body>
   <main class="layout">
     <aside class="panel">
-      <p class="eyebrow">ZERANA / WORLD ENGINE V2</p>
-      <p class="preview-nav"><a href="../">← Jeu actuel</a><span id="build-version">Préversion</span></p>
-      <h1>Laboratoire terrain</h1>
-      <p class="preview-notice">Préversion expérimentale : joueur métrique et streaming à activer dans « Monde continu ». LOD fixe, performances encore à optimiser.</p>
-      <p class="intro">Terrain de validation ou données Mapbox. Les appels réels nécessitent un token public et une action explicite.</p>
+      <p class="eyebrow">ZERANA / PRÉVERSION V2</p>
+      <h1>Explore le monde.</h1>
+      <p class="intro">Le terrain se charge autour de toi. Déplace-toi directement au clavier.</p>
       <form id="controls">
-        <label>Source<select id="source-mode"><option value="synthetic">Synthétique — hors ligne</option><option value="mapbox">Mapbox — satellite et relief</option></select></label>
-        <div id="provider-options" hidden>
-          <label>Token Mapbox public (pk.)<input id="mapbox-token" type="password" autocomplete="off" spellcheck="false" placeholder="pk.…" /></label>
-          <p id="site-token-state" class="footnote"></p>
-          <label class="consent"><input id="allow-preview" type="checkbox" /> J’accepte un aperçu sans altitude WGS84 certifiée.</label>
-          <p class="footnote">Le datum Mapbox est mixte. Aucune correction géoïde n’est inventée. Token conservé en mémoire seulement. Requêtes pouvant être facturées par Mapbox.</p>
-        </div>
-        <label for="place">Point de contrôle</label>
-        <select id="place">
-          <option value="paris">Paris</option>
-          <option value="equator">Équateur</option>
-          <option value="tanger">Tanger</option>
-          <option value="tokyo">Tokyo</option>
-          <option value="antimeridian">Antiméridien</option>
-          <option value="north">Haute latitude</option>
-        </select>
-        <div class="fields">
-          <label>Longitude (°)<input id="longitude" type="number" step="any" value="2.35" required /></label>
-          <label>Latitude (°)<input id="latitude" type="number" step="any" value="48.86" required /></label>
-        </div>
-        <div class="fields">
-          <label>Cellules<select id="side"><option value="1">1 cellule</option><option value="2">4 cellules</option><option value="3">9 cellules</option></select></label>
-          <label>Niveau<select id="level"><option>15</option><option selected>17</option><option>19</option><option>21</option></select></label>
-        </div>
-        <div class="fields">
-          <label>Relief<select id="profile"><option value="waves">Ondulations ECEF</option><option value="flat">Ellipsoïde, h = 0</option></select></label>
-          <label>Subdivisions<select id="subdivisions"><option selected>32</option><option>64</option><option>128</option></select></label>
-        </div>
-        <button type="submit" id="build">Générer la scène</button>
-      <button type="button" id="cancel-load" hidden>Annuler le chargement</button>
+        <label>Monde<select id="source-mode"><option value="synthetic">Terrain de test — hors ligne</option><option value="mapbox">Monde réel — satellite</option></select></label>
+        <label>Lieu<select id="place">
+          <option value="paris">Paris</option><option value="tanger">Tanger</option><option value="tokyo">Tokyo</option>
+          <option value="equator">Équateur</option><option value="antimeridian">Antiméridien</option><option value="north">Haute latitude</option>
+        </select></label>
+        <button type="submit" id="build">Explorer ce lieu</button>
+        <button type="button" id="cancel-load" hidden>Annuler le chargement</button>
+        <details id="world-options">
+          <summary>Lieu précis et réglages</summary>
+          <div class="fields">
+            <label>Longitude (°)<input id="longitude" type="number" step="any" value="2.35" required /></label>
+            <label>Latitude (°)<input id="latitude" type="number" step="any" value="48.86" required /></label>
+          </div>
+          <div class="fields">
+            <label>Départ<select id="side"><option value="1">1 cellule</option><option value="2">4 cellules</option><option value="3">9 cellules</option></select></label>
+            <label>Niveau<select id="level"><option>15</option><option selected>17</option><option>19</option><option>21</option></select></label>
+          </div>
+          <div class="fields">
+            <label>Relief de test<select id="profile"><option value="waves">Ondulations</option><option value="flat">Plat</option></select></label>
+            <label>Subdivisions<select id="subdivisions"><option selected>32</option><option>64</option><option>128</option></select></label>
+          </div>
+          <div id="provider-options" hidden>
+            <label>Autre token public (facultatif)<input id="mapbox-token" type="password" autocomplete="off" spellcheck="false" placeholder="Le token du site est déjà configuré" /></label>
+            <p id="site-token-state" class="footnote"></p>
+            <label class="consent"><input id="allow-preview" type="checkbox" /> Aperçu : altitude absolue non certifiée.</label>
+          </div>
+          <label class="consent"><input id="auto-explore" type="checkbox" checked /> Streaming et marche automatiques</label>
+        </details>
       </form>
-      <div class="checks">
-        <label><input id="wireframe" type="checkbox" checked /> Maillage</label>
-        <label><input id="normals" type="checkbox" /> Normales</label>
-        <label><input id="metric-grid" type="checkbox" /> Grille tangente 5 m</label>
-      </div>
-      <div class="actions">
-        <button id="overview" type="button">Vue d’ensemble</button>
-        <button id="human" type="button">Échelle humaine</button>
-        <button id="rebase" type="button">Déplacer l’origine</button>
-      </div>
-      <p id="status" role="status" aria-live="polite">Initialisation…</p>
-      <dl id="metrics"></dl>
-      <p class="footnote">Repère : X Est · Y Haut · Z Sud<br>Référence verticale affichée dans les diagnostics · Capsule 1,80 m<br>Souris : orbite, zoom et déplacement</p>
+      <p id="status" role="status" aria-live="polite">Chargement du monde…</p>
+      <p id="play-guide" class="play-guide"><strong>ZQSD / WASD / flèches</strong> pour avancer.<br>Maj : courir · Espace : sauter.<br>Glisser la souris : regarder · Échap : pause.<br>Une touche de déplacement suffit pour reprendre.</p>
+      <p class="preview-notice">Préversion expérimentale. Relief Mapbox approximatif. Streaming borné à 256 requêtes supplémentaires par activation, potentiellement facturables.</p>
+      <details id="diagnostics">
+        <summary>Outils du laboratoire</summary>
+        <div class="checks">
+          <label><input id="wireframe" type="checkbox" /> Maillage</label>
+          <label><input id="normals" type="checkbox" /> Normales</label>
+          <label><input id="metric-grid" type="checkbox" /> Grille 5 m</label>
+        </div>
+        <div class="actions">
+          <button id="overview" type="button">Vue d’ensemble</button><button id="human" type="button">Échelle humaine</button>
+          <button id="rebase" type="button">Déplacer l’origine</button>
+        </div>
+        <div id="runtime-tools"></div>
+        <dl id="metrics"></dl>
+        <p class="footnote">X Est · Y Haut · Z Sud · 1 unité = 1 mètre.<br>Mesures de diagnostic, pas une garantie de performances.</p>
+      </details>
+      <p class="preview-nav"><a href="../">← Jeu V1</a><span id="build-version">Préversion</span></p>
     </aside>
     <section id="viewport" aria-label="Vue 3D du terrain">
-      <div class="badge" id="source-badge">SYNTHÉTIQUE · 1 UNITÉ = 1 MÈTRE</div>
-      <div class="legend" id="uv-legend">Coins UV : NO rouge · NE bleu · SO jaune · SE blanc</div>
-    <div id="attribution" hidden>
+      <div class="badge" id="source-badge">PRÉPARATION DU TERRAIN</div>
+      <div class="legend" id="uv-legend">Repères UV du terrain de test</div>
+      <div id="attribution" hidden>
         <a class="mapbox-logo" href="https://www.mapbox.com/" target="_blank" rel="noopener noreferrer"><img src="./assets/mapbox-logo.svg" width="88" height="23" alt="Mapbox" /></a>
         <div id="provider-attribution"></div>
-        <a href="https://apps.mapbox.com/feedback/" target="_blank" rel="noopener noreferrer">Improve this map</a>
       </div>
     </section>
   </main>

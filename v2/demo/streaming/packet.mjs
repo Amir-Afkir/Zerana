@@ -2,13 +2,14 @@ import { streamCellKey, STREAM_LIMITS } from '../../src/streaming/selection.ts';
 
 export function packetCacheKey(job) {
   // Every change of formula/format/source/LOD creates a separate namespace.
-  return `stream-packet-v1/WGS84-ECEF/terrain-v1/${job.source}/${job.profile}/` +
+  return `stream-packet-v2-bvh/WGS84-ECEF/terrain-v1/${job.source}/${job.profile}/` +
     `${job.source === 'mapbox' ? 'unresolved-preview' : 'ellipsoidal'}/${streamCellKey(job.id)}/N${job.subdivisions}`;
 }
 export function packetBytes(bundle) {
   const p = bundle.packet;
   return p.positions.byteLength + p.normals.byteLength + p.uvs.byteLength + p.indices.byteLength +
     p.heightsMeters.byteLength + (bundle.texture?.rgba.byteLength || 0) +
+    (bundle.collider ? [bundle.collider.boxes,bundle.collider.links,bundle.collider.triangles,bundle.collider.sourceIds].reduce((n,a)=>n+a.byteLength,0) : 0) +
     p.sampleKeys.reduce((n,k) => n + 48 + k.length * 2, 0) + 8192;
 }
 export function validatePacket(bundle, job) {
@@ -39,7 +40,8 @@ export function validatePacket(bundle, job) {
 export function transferBuffers(bundle) {
   const p = bundle.packet;
   return [p.positions.buffer,p.normals.buffer,p.uvs.buffer,p.indices.buffer,p.heightsMeters.buffer,
-    ...(bundle.texture ? [bundle.texture.rgba.buffer] : [])];
+    ...(bundle.texture ? [bundle.texture.rgba.buffer] : []),
+    ...(bundle.collider ? [bundle.collider.boxes.buffer,bundle.collider.links.buffer,bundle.collider.triangles.buffer,bundle.collider.sourceIds.buffer] : [])];
 }
 export async function packetDigest(bundle) {
   const p = bundle.packet;

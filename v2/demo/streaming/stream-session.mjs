@@ -1,4 +1,5 @@
 import './stream.css';
+import { CellAdmission } from './cell-admission.mjs';
 import { CellScheduler } from '../../src/streaming/scheduler.ts';
 import { selectSlidingWindow } from '../../src/streaming/sliding-window.ts';
 import { RecyclingIndex } from '../../src/streaming/recycling.ts';
@@ -77,6 +78,8 @@ export class StreamSession {
     this.epoch++;this.active=true;this.error=null;this.nextSelection=0;this.lastReport=0;this.now=0;
     this.scheduler=new CellScheduler();this.cache=new WeightedLru(STREAM_LIMITS.cacheBytes,STREAM_LIMITS.cacheEntries);
     this.pool=new StreamWorkerPool(this.config.source==='mapbox'?1:Math.max(1,Math.min(2,(navigator.hardwareConcurrency||2)-2)));
+    this.admission=null;this.imageFlight=null;this.imageReady=null;this.imageFailures=new Set();this.imageSerial=1000000;
+    this.imageryInstalled=0;this.maxStageMs={};this.maxCellWorkMs=0;this.currentCellWorkMs=0;
     this.httpCharged=0;this.httpActual=0;this.diskHits=0;this.workerCompleted=0;this.evicted=0;
     this.installed=0;this.peakCells=this.loaded.size;this.peakQueuedBytes=0;this.maxCommitMs=0;this.sourceCacheBytes=0;
     this.persistent=this.$('stream-cache').checked&&this.config.source==='synthetic';
@@ -106,6 +109,8 @@ export class StreamSession {
   checkCapacity(plan){if(new Set([...plan.wanted.map(i=>i.key),...this.pinned]).size>STREAM_LIMITS.maxCells)throw new Error('STREAM_RESIDENCY_BUDGET');}
   stop(reason=null) {
     this.epoch++;this.active=false;
+    this.admission?.cancel();this.admission=null;
+    this.imageFlight?.controller.abort();this.imageFlight=null;this.imageReady=null;
     for(const controller of this.controllers.values())controller.abort();this.controllers.clear();
     this.pool?.dispose();this.scheduler?.dispose();this.cache?.clear();
     if(reason){this.error=reason;this.message(`Streaming arrêté : ${reason}. Terrain déjà chargé conservé.`);}
@@ -119,7 +124,10 @@ export class StreamSession {
     const remaining=[...this.loaded].filter(([key])=>!remove.has(key)).map(([,value])=>value.packet);
     // No fall-through frame: collision and visual residency change synchronously.
     this.player.physics.syncPackets(remaining);
-    for(const key of remove){const value=this.loaded.get(key);this.view.removeCell(value.packet.id);this.loaded.delete(key);
+    for(const key of remove){
+      if(this.imageFlight?.key===key)this.imageFlight.controller.abort();
+      this.imageFailures?.delete(key);
+      const value=this.loaded.get(key);this.view.removeCell(value.packet.id);this.loaded.delete(key);
       this.cache.set(key,value,packetBytes(value));this.recycling?.delete(key);this.seen?.delete(key);this.shown?.delete(key);this.evicted++;}
     this.metricsDirty=true;
   }
@@ -130,13 +138,12 @@ export class StreamSession {
     let grant=0;
     if(this.config.source==='mapbox') {
       const dem=planRasterTiles([interest.id],Math.min(interest.id.level,15),256,this.config.subdivisions,1);
-      const images=planRasterTiles([interest.id],Math.min(interest.id.level,18),256,256,1);
-      grant=Math.min(2*(dem.length+images.length+2),HTTP_LIMIT-this.httpCharged);
+      grant=Math.min(2*(dem.length+1),HTTP_LIMIT-this.httpCharged);
       if(grant<=0){this.stop('STREAM_HTTP_BUDGET');return;}
       this.httpCharged+=grant; // Reserve worst case BEFORE starting network work.
     }
     const controller=new AbortController();this.controllers.set(ticket.revision,controller);
-    const input={...this.config,id:interest.id,persistent:this.persistent,httpGrant:grant};
+    const input={...this.config,id:interest.id,persistent:this.persistent,httpGrant:grant,layer:'terrain'};
     const account=attempts=>{
       // On crash/termination, retain the whole reservation: never reset a hidden quota.
       if(Number.isInteger(attempts)&&attempts>=0&&attempts<=grant){this.httpCharged-=grant-attempts;this.httpActual+=attempts;}
@@ -155,11 +162,60 @@ export class StreamSession {
       if(['PROVIDER_AUTH','STREAM_HTTP_BUDGET'].includes(code))this.stop(code);
     }).finally(()=>{if(epoch===this.epoch)this.controllers.delete(ticket.revision);});
   }
+  measureStage(stage,ms){
+    if(stage==='upload'||stage==='imagery')this.didGpuWork=true;
+    this.maxStageMs[stage]=Math.max(this.maxStageMs[stage]||0,ms);
+    this.maxCommitMs=Math.max(this.maxCommitMs,ms);this.currentCellWorkMs+=ms;
+  }
+  /** One low-priority image job at a time, sharing workers and the SAME HTTP
+   * quota with terrain. A slow image never blocks terrain admission. */
+  updateImagery(){
+    if(this.config.source!=='mapbox')return;
+    if(this.imageReady){
+      const result=this.imageReady;this.imageReady=null;
+      const bundle=this.loaded.get(result.key);
+      if(bundle!==result.bundle||bundle.texture)return;
+      const next={...bundle,texture:result.texture};
+      try{
+        validatePacket(next,{...this.config,id:bundle.packet.id});
+        const bytes=packetBytes(next),extra=bytes-packetBytes(bundle);
+        if(!this.recycling.fits(extra,0)){this.trimRecycled(extra,0);this.imageReady=result;return;}
+        const start=performance.now();this.view.applyTexture(bundle.packet.id,result.texture);
+        this.recycling.resize(result.key,bytes);bundle.texture=result.texture;
+        this.imageryInstalled++;this.metricsDirty=true;this.pendingAttributions=result.attributions;
+        this.measureStage('imagery',performance.now()-start);
+      }catch{this.imageFailures.add(result.key);this.error='STREAM_IMAGERY_ERROR';}
+      return;
+    }
+    if(this.imageFlight||this.pool.available<1||this.scheduler.queuedBytes+this.scheduler.reservedBytes+STREAM_LIMITS.reservedCellBytes>STREAM_LIMITS.maxQueuedBytes)return;
+    const interest=[...this.plan.wanted].sort((a,b)=>Number(this.shown.has(b.key))-Number(this.shown.has(a.key))||a.priority-b.priority)
+      .find(i=>this.loaded.has(i.key)&&!this.loaded.get(i.key).texture&&!this.imageFailures.has(i.key));
+    if(!interest)return;
+    const bundle=this.loaded.get(interest.key),epoch=this.epoch;
+    const tiles=planRasterTiles([interest.id],Math.min(interest.id.level,18),256,256,1);
+    const grant=Math.min(2*(tiles.length+1),HTTP_LIMIT-this.httpCharged);
+    if(grant<=0){this.stop('STREAM_HTTP_BUDGET');return;}
+    this.httpCharged+=grant;
+    const controller=new AbortController(),ticket={key:`imagery:${interest.key}`,revision:++this.imageSerial};
+    const flight={key:interest.key,controller};this.imageFlight=flight;
+    const account=attempts=>{if(Number.isSafeInteger(attempts)&&attempts>=0&&attempts<=grant){this.httpCharged-=grant-attempts;this.httpActual+=attempts;}};
+    this.pool.run(ticket,{...this.config,id:interest.id,layer:'imagery',persistent:false,httpGrant:grant},controller.signal).then(result=>{
+      if(epoch!==this.epoch||this.disposed)return;
+      account(result.attempts);this.sourceCacheBytes=result.sourceCacheBytes;
+      if(!controller.signal.aborted&&this.loaded.get(interest.key)===bundle)
+        this.imageReady={key:interest.key,bundle,texture:result.texture,attributions:result.attributions};
+    }).catch(error=>{
+      if(epoch!==this.epoch||this.disposed)return;
+      account(error.attempts);
+      if(error.message!=='ABORTED')this.imageFailures.add(interest.key);
+      if(['PROVIDER_AUTH','STREAM_HTTP_BUDGET'].includes(error.message))this.stop(error.message);
+    }).finally(()=>{if(this.imageFlight===flight)this.imageFlight=null;});
+  }
   update(dt) {
     this.buttons();
     if(!this.active||this.disposed||document.hidden||this.player.loading||!this.player.player)return;
     this.now+=Math.min(Math.max(dt,0),.1)*1000;
-    const frameStart=performance.now();
+    const frameStart=performance.now();this.didGpuWork=false;
     try {
       const state=this.player.player.state;
       // Exponential velocity filter; one authoritative player's ECEF velocity.
@@ -173,9 +229,14 @@ export class StreamSession {
         for(const ticket of actions.cancel)this.controllers.get(ticket.revision)?.abort();
         this.evict(actions.evict);
       }
-      // At most one cell commit per frame, and never begin after the soft budget.
-      if(performance.now()-frameStart<STREAM_LIMITS.uploadBudgetMs){
-        const ready=this.scheduler.ready();
+      // Cooperative validation, mesh creation, shader compilation and upload
+      // happen on separate frames. Safety/collision commits remain atomic.
+      if(this.admission&&!this.scheduler.isReady(this.admission.ready.ticket)){
+        this.admission.cancel();this.admission=null;
+      }
+      const deadline=frameStart+STREAM_LIMITS.uploadBudgetMs;
+      if(performance.now()<deadline){
+        const ready=this.admission?.ready||this.scheduler.ready();
         if(ready){
           if(this.sliding)this.trimRecycled(packetBytes(ready.value),1);
           if(!this.sliding&&this.loaded.size>=STREAM_LIMITS.maxCells){
@@ -184,25 +245,32 @@ export class StreamSession {
             if(candidate&&this.scheduler.evictRetained(candidate))this.evict([candidate]);
           }
           if(this.loaded.size<STREAM_LIMITS.maxCells&&this.recycling.fits(packetBytes(ready.value))){
-            const start=performance.now(),bundle=ready.value;
             try{
-              // Source snapshots can differ. Concrete shared keys, vertices and normals
-              // must still agree, otherwise keep the last valid surface and stop this cell.
-              const existing=[...this.loaded.values()].map(v=>v.packet),next=[...existing,bundle.packet];
-              // Only the new cell's four shared edges can introduce a new seam.
-              const neighbors=scheme.getNeighbors(bundle.packet.id).map(id=>this.loaded.get(streamCellKey(id))?.packet).filter(Boolean);
-              const seams=measureTerrainSeams([bundle.packet,...neighbors],this.player.player.frame,{allowSourceSnapshots:true});
-              if(seams.mismatchedKeys||seams.maxGapMeters>.001||seams.maxNormalDelta>.001)throw new Error('STREAM_SEAM_MISMATCH');
-              this.view.addCell(bundle.packet,bundle.texture,{visible:!this.sliding});
-              try{this.player.physics.syncPackets(next);}catch(error){this.view.removeCell(bundle.packet.id);throw error;}
-              this.loaded.set(ready.ticket.key,bundle);
-              this.recycling.insert(ready.ticket.key,packetBytes(bundle));
-              this.scheduler.installed(ready.ticket);this.installed++;
-              if(!this.sliding)this.shown.add(ready.ticket.key);
-              this.metricsDirty=true;if(bundle.attributions?.length)this.pendingAttributions=bundle.attributions;
-              this.peakCells=Math.max(this.peakCells,this.loaded.size);
-            }catch(error){this.scheduler.fail(ready.ticket,error.message,this.now,false);this.error=error.message;}
-            this.maxCommitMs=Math.max(this.maxCommitMs,performance.now()-start);
+              if(!this.admission){
+                this.currentCellWorkMs=0;
+                this.admission=new CellAdmission(ready,this.view,(stage,ms)=>this.measureStage(stage,ms));
+              }
+              const complete=this.admission.advance(deadline);
+              if(complete&&performance.now()<deadline){
+                const started=performance.now(),bundle=ready.value;
+                const existing=[...this.loaded.values()].map(v=>v.packet),next=[...existing,bundle.packet];
+                const neighbors=scheme.getNeighbors(bundle.packet.id).map(id=>this.loaded.get(streamCellKey(id))?.packet).filter(Boolean);
+                const seams=measureTerrainSeams([bundle.packet,...neighbors],this.player.player.frame,{allowSourceSnapshots:true});
+                if(seams.mismatchedKeys||seams.maxGapMeters>.001||seams.maxNormalDelta>.001)throw new Error('STREAM_SEAM_MISMATCH');
+                this.player.physics.syncPackets(next,new Map([[bundle.packet,bundle.colliderIndex]]));
+                this.loaded.set(ready.ticket.key,bundle);this.recycling.insert(ready.ticket.key,packetBytes(bundle));
+                this.scheduler.installed(ready.ticket);this.installed++;
+                this.admission.finish();this.admission=null;
+                if(!this.sliding){this.shown.add(ready.ticket.key);this.view.setVisibleCells([...this.loaded.values()].map(v=>v.packet.id));}
+                this.metricsDirty=true;if(bundle.attributions?.length)this.pendingAttributions=bundle.attributions;
+                this.peakCells=Math.max(this.peakCells,this.loaded.size);
+                this.measureStage('commit',performance.now()-started);
+                this.maxCellWorkMs=Math.max(this.maxCellWorkMs,this.currentCellWorkMs);
+              }
+            }catch(error){
+              this.admission?.cancel();this.admission=null;
+              this.scheduler.fail(ready.ticket,error.message,this.now,false);this.error=error.message;
+            }
           }
         }
       }
@@ -212,7 +280,13 @@ export class StreamSession {
       }
       // Generation may not outrun the small byte-bounded CPU-ready/upload queue.
       for(let i=0;i<2&&this.pool.available>0&&this.active;i++){
+        const imageReservation=(this.imageFlight||this.imageReady)?STREAM_LIMITS.reservedCellBytes:0;
+        if(this.scheduler.queuedBytes+this.scheduler.reservedBytes+imageReservation+STREAM_LIMITS.reservedCellBytes>STREAM_LIMITS.maxQueuedBytes)break;
         const job=this.scheduler.next(this.now);if(!job)break;this.dispatch(job);
+      }
+      if(this.active){
+        if(this.imageFlight && (!this.plan.wanted.some(i=>i.key===this.imageFlight.key) || this.scheduler.snapshot().states.QUEUED>0))this.imageFlight.controller.abort();
+        if(!this.admission&&!this.didGpuWork&&performance.now()<deadline)this.updateImagery();
       }
       if(this.now-this.lastReport>200){this.report();this.lastReport=this.now;}
     }catch(error){this.stop(error.message);}
@@ -230,6 +304,11 @@ export class StreamSession {
       reused:this.reused||0,windowSwitches:this.windowSwitches||0,waitingForWindow:this.waiting||false,
       maxSwitchMs:this.maxSwitchMs||0,residentPayloadBytes:this.recycling?.bytes||0,maxResidentPayloadBytes:this.recycling?.maxBytes||32*1048576,maxRecycled:12,
       bvhBuildCount:this.player.physics?.bvhBuildCount||0,
+      mainThreadBvhBuildCount:this.player.physics?.mainThreadBvhBuildCount||0,
+      preparedBvhAdoptions:this.player.physics?.preparedBvhAdoptions||0,
+      admissionStage:this.admission?.stage||null,maxStageMs:this.maxStageMs||{},maxCellWorkMs:this.maxCellWorkMs||0,
+      imageryInstalled:this.imageryInstalled||0,imageryPending:!!(this.imageFlight||this.imageReady),
+      imageryReservationBytes:(this.imageFlight||this.imageReady)?STREAM_LIMITS.reservedCellBytes:0,
       error:this.error,installed:this.installed||0,evicted:this.evicted||0,workerCompleted:this.workerCompleted||0,
       workers:this.pool?{created:this.pool.created,terminated:this.pool.terminated,available:this.pool.available}:null,
       renderedKeys:[...this.loaded.keys()],pinnedKeys:[...(this.pinned||[])],centerKey:this.plan?.centerKey,
@@ -242,7 +321,7 @@ export class StreamSession {
     window.__ZERANA_STREAM_DEBUG__=summary;
     const rows=[['Visibles / recyclées',`${summary.shownKeys.length} / ${summary.recycledKeys.length}`],['Réactivées sans génération',summary.reused],['Cellules résidentes',`${summary.cells} / ${summary.maxCells}`],['Nouvelles / libérées',`${summary.installed} / ${summary.evicted}`],
       ['Cache mémoire',`${(summary.cacheBytes/1048576).toFixed(2)} Mio`],['Cache disque : hits',summary.diskHits],
-      ['Requêtes Mapbox',`${summary.httpActual} / ${HTTP_LIMIT}`],['Commit cellule max.',`${summary.maxCommitMs.toFixed(1)} ms`]];
+      ['Requêtes Mapbox',`${summary.httpActual} / ${HTTP_LIMIT}`],['Étape d’intégration max.',`${summary.maxCommitMs.toFixed(1)} ms`]];
     this.$('stream-metrics').replaceChildren(...rows.flatMap(([key,value])=>{const a=document.createElement('dt'),b=document.createElement('dd');a.textContent=key;b.textContent=String(value);return[a,b];}));
     if(this.active&&this.sliding&&!summary.scheduler?.errors.length)this.message(this.waiting?'Préparation de la fenêtre suivante ; terrain précédent conservé.':'Fenêtre 3×3 prête. Les cellules quittées restent en recyclage.');
     if(this.active&&summary.scheduler?.errors.length)this.message(`Chargements en erreur : ${summary.scheduler.errors.join(', ')}. Le sol valide est conservé.`);

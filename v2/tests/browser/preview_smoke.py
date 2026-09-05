@@ -113,7 +113,7 @@ async def run(preview_url):
             require(await page.locator('#root form').count() == 1, 'LEGACY_ADDRESS_FORM_NOT_RENDERED')
             require(report['pageErrorCount'] == 0, 'LEGACY_JAVASCRIPT_ERROR')
             report['checks'].append('legacy-address-form-renders')
-            await page.goto(preview_url, wait_until='networkidle')
+            await page.goto(preview_url + ('&' if '?' in preview_url else '?') + 'lab=manual', wait_until='networkidle')
             await page.wait_for_function('document.body.dataset.ready === "1"')
             snap = await page.evaluate('window.__ZERANA_TERRAIN_DEBUG__')
             require(snap['buildSha'] == manifest['commit'], 'STALE_PREVIEW_JAVASCRIPT')

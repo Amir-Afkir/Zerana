@@ -89,12 +89,14 @@ export function segmentTriangle(p: Vec3,q: Vec3,t: Triangle): {distance: number;
   return {distance:best,normal};
 }
 
-interface Leaf { readonly box: Box; readonly triangles: readonly Triangle[]; }
+interface IndexedTriangle extends Triangle { readonly sourceIndex: number; }
+interface Leaf { readonly box: Box; readonly triangles: readonly IndexedTriangle[]; }
 interface Branch { readonly box: Box; readonly left: Node; readonly right: Node; }
 type Node=Leaf|Branch;
 /** Immutable cell-local BVH. Render-origin changes never modify these vertices. */
 export class TriangleIndex {
-  private readonly root: Node;
+  private readonly root: Node | null;
+  private readonly prepared: PreparedTriangleIndex | null = null;
   readonly triangleCount: number;
   constructor(positions: Float32Array,indices: Uint16Array|Uint32Array){
     if(positions.length%3 || indices.length%3 || !indices.length) throw new RangeError('Invalid collider buffers');
@@ -104,13 +106,13 @@ export class TriangleIndex {
       if(i*3+2>=positions.length) throw new RangeError('Collider index out of range');
       return [positions[i*3]!,positions[i*3+1]!,positions[i*3+2]!];
     };
-    const triangles: Triangle[]=[];
+    const triangles: IndexedTriangle[]=[];
     for(let i=0;i<indices.length;i+=3){
-      const t={a:read(indices[i]!),b:read(indices[i+1]!),c:read(indices[i+2]!)};
+      const t={a:read(indices[i]!),b:read(indices[i+1]!),c:read(indices[i+2]!),sourceIndex:i/3};
       unit(cross(sub(t.b,t.a),sub(t.c,t.a)));triangles.push(t);
     }
     this.triangleCount=triangles.length;
-    const build=(items: Triangle[]): Node=>{
+    const build=(items: IndexedTriangle[]): Node=>{
       // Avoid spreading a potentially large array into Math.min/max.
       const min=[Infinity,Infinity,Infinity],max=[-Infinity,-Infinity,-Infinity];
       for(const t of items) for(const p of [t.a,t.b,t.c]) for(let i=0;i<3;i++){
@@ -125,12 +127,116 @@ export class TriangleIndex {
     };
     this.root=build(triangles);
   }
+  /** Transferable snapshot. Triangles are exact copies of the Float32 render
+   * coordinates; no extra quantisation, rotation or world-origin offset. */
+  snapshot(): PreparedTriangleIndex {
+    if (this.prepared) throw new Error('An adopted collider is owned by the physics world');
+    const boxes: number[] = [], links: number[] = [], triangles: number[] = [], sourceIds: number[] = [];
+    const visit = (node: Node): number => {
+      const id = boxes.length / 6;
+      boxes.push(...node.box.min, ...node.box.max); links.push(-1, -1, 0, 0);
+      if ('triangles' in node) {
+        links[id * 4 + 2] = triangles.length / 9; links[id * 4 + 3] = node.triangles.length;
+        for (const t of node.triangles) { triangles.push(...t.a, ...t.b, ...t.c); sourceIds.push(t.sourceIndex); }
+      } else { links[id * 4] = visit(node.left); links[id * 4 + 1] = visit(node.right); }
+      return id;
+    };
+    visit(this.root!);
+    return { version: 'cell-bvh-v1', boxes: new Float32Array(boxes), links: new Int32Array(links),
+      triangles: new Float32Array(triangles), sourceIds: new Uint32Array(sourceIds) };
+  }
+  /** Validation is cooperative (one batch per next()). The caller transfers
+   * ownership of snapshot arrays after success; never mutate or retransfer them.
+   * No sorting, tree building or vertex copying takes place on the main thread. */
+  static *adopt(snapshot: PreparedTriangleIndex, positions: Float32Array,
+    indices: Uint16Array | Uint32Array): Generator<void, TriangleIndex, undefined> {
+    const invalid = (): never => { throw new Error('INVALID_PREPARED_COLLIDER'); };
+    const n = indices.length / 3;
+    if (!(positions instanceof Float32Array) || !(indices instanceof Uint16Array || indices instanceof Uint32Array) ||
+      !Number.isInteger(n) || n < 1 || n > 131072 || positions.length % 3 || !snapshot ||
+      snapshot.version !== 'cell-bvh-v1' || !(snapshot.boxes instanceof Float32Array) ||
+      !(snapshot.links instanceof Int32Array) || !(snapshot.triangles instanceof Float32Array) ||
+      !(snapshot.sourceIds instanceof Uint32Array)) invalid();
+    const nodes = snapshot.boxes.length / 6, { boxes, links, triangles, sourceIds } = snapshot;
+    if (!Number.isInteger(nodes) || nodes < 1 || nodes > 2 * n - 1 || links.length !== 4 * nodes ||
+      triangles.length !== n * 9 || sourceIds.length !== n) invalid();
+    for (let i = 0; i < positions.length; i++) {
+      if (!Number.isFinite(positions[i]!)) invalid();
+      if (i % 384 === 383) yield;
+    }
+    const idsSeen = new Uint8Array(n), rangesSeen = new Uint8Array(n), parents = new Uint8Array(nodes);
+    for (let t = 0; t < n; t++) {
+      const id = sourceIds[t]!;
+      if (id >= n || idsSeen[id]) invalid(); idsSeen[id] = 1;
+      for (let j = 0; j < 9; j++) {
+        const index = indices[id * 3 + Math.floor(j / 3)]! * 3 + j % 3;
+        const value = triangles[t * 9 + j]!;
+        if (index >= positions.length || !Number.isFinite(value) || value !== positions[index]) invalid();
+      }
+      const o = t * 9;
+      const a: Vec3 = [triangles[o]!, triangles[o+1]!, triangles[o+2]!];
+      const b: Vec3 = [triangles[o+3]!, triangles[o+4]!, triangles[o+5]!];
+      const c: Vec3 = [triangles[o+6]!, triangles[o+7]!, triangles[o+8]!];
+      if (length(cross(sub(b, a), sub(c, a))) < 1e-12) invalid();
+      if (t % 128 === 127) yield;
+    }
+    for (let i = 0; i < nodes; i++) {
+      const b = i * 6, o = i * 4, left = links[o]!, right = links[o+1]!, start = links[o+2]!, count = links[o+3]!;
+      for (let j = 0; j < 3; j++) if (!Number.isFinite(boxes[b+j]!) || !Number.isFinite(boxes[b+j+3]!) || boxes[b+j]! > boxes[b+j+3]!) invalid();
+      if (left === -1 && right === -1) {
+        if (start < 0 || count < 1 || count > 8 || start + count > n) invalid();
+        for (let t = start; t < start + count; t++) {
+          if (rangesSeen[t]) invalid(); rangesSeen[t] = 1;
+          for (let j = 0; j < 9; j++) {
+            const v = triangles[t*9+j]!, axis = j%3;
+            if (v < boxes[b+axis]! || v > boxes[b+axis+3]!) invalid();
+          }
+        }
+      } else {
+        if (left <= i || right <= i || left >= nodes || right >= nodes || left === right || count !== 0 || start !== 0) invalid();
+        for (const child of [left, right]) {
+          if (parents[child]) invalid(); parents[child] = 1;
+          for (let j = 0; j < 3; j++) if (boxes[child*6+j]! < boxes[b+j]! || boxes[child*6+j+3]! > boxes[b+j+3]!) invalid();
+        }
+      }
+      if (i % 128 === 127) yield;
+    }
+    if (parents[0] || parents.subarray(1).some(v => v !== 1) || rangesSeen.some(v => v !== 1)) invalid();
+    const index = Object.create(TriangleIndex.prototype) as TriangleIndex;
+    Object.defineProperties(index, { root: { value: null }, prepared: { value: snapshot }, triangleCount: { value: n } });
+    return index;
+  }
   query(box: Box): readonly Triangle[]{
+    if (this.prepared) {
+      const { boxes, links, triangles } = this.prepared, stack = [0], found: Triangle[] = [];
+      while (stack.length) {
+        const id = stack.pop()!, b = id*6, o = id*4;
+        let intersects = true;
+        for (let j = 0; j < 3; j++) if (boxes[b+j]! > box.max[j]! || boxes[b+j+3]! < box.min[j]!) intersects = false;
+        if (!intersects) continue;
+        if (links[o] !== -1) { stack.push(links[o+1]!, links[o]!); continue; }
+        for (let t = links[o+2]!; t < links[o+2]! + links[o+3]!; t++) {
+          const p = t*9;
+          found.push({ a: [triangles[p]!,triangles[p+1]!,triangles[p+2]!],
+            b: [triangles[p+3]!,triangles[p+4]!,triangles[p+5]!], c: [triangles[p+6]!,triangles[p+7]!,triangles[p+8]!] });
+        }
+      }
+      return found;
+    }
     const found: Triangle[]=[];
     const visit=(node: Node): void=>{
       if(!overlaps(box,node.box)) return;
       if('triangles' in node) found.push(...node.triangles);else{visit(node.left);visit(node.right);}
     };
-    visit(this.root);return found;
+    visit(this.root!);return found;
   }
+}
+
+/** Arrays are transferred, not structured-cloned object trees. */
+export interface PreparedTriangleIndex {
+  readonly version: 'cell-bvh-v1';
+  readonly boxes: Float32Array;
+  readonly links: Int32Array;
+  readonly triangles: Float32Array;
+  readonly sourceIds: Uint32Array;
 }

@@ -16,6 +16,12 @@ export class RecyclingIndex {
     if (!this.fits(bytes)) throw new RangeError('RECYCLING_CAPACITY');
     this.entries.set(key, {bytes, used: ++this.tick}); this.usedBytes += bytes;
   }
+  resize(key: string, bytes: number): void {
+    const entry = this.entries.get(key);
+    if (!entry || !Number.isSafeInteger(bytes) || bytes < 1 || this.bytes - entry.bytes + bytes > this.maxBytes)
+      throw new RangeError('RECYCLING_CAPACITY');
+    this.usedBytes += bytes - entry.bytes; entry.bytes = bytes;
+  }
   touch(keys: Iterable<string>): void {
     const tick = ++this.tick;
     for (const key of keys) { const entry = this.entries.get(key); if (entry) entry.used = tick; }

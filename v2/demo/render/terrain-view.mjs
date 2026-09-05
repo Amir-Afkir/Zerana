@@ -73,6 +73,7 @@ export class TerrainView{
     this.texture=this.own(checkerTexture());
     this.surfaceMaterial=this.own(new THREE.MeshStandardMaterial({map:this.texture,roughness:1,metalness:0}));
     this.normalMaterial=this.own(new THREE.MeshNormalMaterial());
+    this.previewMaterial=this.own(new THREE.MeshStandardMaterial({color:0x64796a,roughness:1,metalness:0}));
     const wireMaterial=this.wireMaterial=this.own(new THREE.LineBasicMaterial({color:0x86c8b6,transparent:true,opacity:0.23}));
     const borderMaterial=this.borderMaterial=this.own(new THREE.LineBasicMaterial({color:0x90f0cc}));
     for(const packet of packets)this.addCell(packet,imagery.get(`${packet.id.level}/${packet.id.x}/${packet.id.y}`));
@@ -96,7 +97,7 @@ export class TerrainView{
       geometry.setAttribute('normal',new THREE.BufferAttribute(packet.normals,3));
       geometry.setAttribute('uv',new THREE.BufferAttribute(packet.uvs,2));
       geometry.setIndex(new THREE.BufferAttribute(packet.indices,1));geometry.computeBoundingBox();geometry.computeBoundingSphere();
-      let surfaceMaterial=this.surfaceMaterial;
+      let surfaceMaterial=packet.altitudeAuthority==='preview-only'?this.previewMaterial:this.surfaceMaterial;
       const image=imagePacket;
       if(image){
         const texture=own(new THREE.DataTexture(image.rgba,image.width,image.width));
@@ -107,7 +108,7 @@ export class TerrainView{
         surfaceMaterial=own(new THREE.MeshStandardMaterial({map:texture,roughness:1,metalness:0}));
       }
       const root=new THREE.Group(),mesh=new THREE.Mesh(geometry,surfaceMaterial);root.visible=visible;
-      const wire=new THREE.LineSegments(own(new THREE.WireframeGeometry(geometry)),this.wireMaterial);
+      const wire=null; // Debug wire geometry is allocated only when requested.
       const border=[];const n=packet.subdivisions,w=n+1;
       const add=i=>border.push(packet.positions[i*3],packet.positions[i*3+1],packet.positions[i*3+2]);
       for(let col=0;col<=n;col++)add(col);
@@ -115,11 +116,57 @@ export class TerrainView{
       for(let col=n-1;col>=0;col--)add(n*w+col);
       for(let row=n-1;row>0;row--)add(row*w);
       const edgeGeometry=own(new THREE.BufferGeometry());edgeGeometry.setAttribute('position',new THREE.Float32BufferAttribute(border,3));
-      root.add(mesh,wire,new THREE.LineLoop(edgeGeometry,this.borderMaterial));
+      const edge=new THREE.LineLoop(edgeGeometry,this.borderMaterial);
+      root.add(mesh,edge);
       applyFrame(root,frameTransform(packet.anchor,this.world));this.patchRoot.add(root);
-      this.cellViews.push({packet,root,mesh,wire,surfaceMaterial,resources});
+      this.cellViews.push({packet,root,mesh,wire,edge,surfaceMaterial,resources});
       this.setModes(this.modes || {wireframe:true,normals:false,metricGrid:false});
     }catch(error){for(const resource of resources){resource.dispose();this.resources.delete(resource);}throw error;}
+  }
+  findCell(id){return this.cellViews.find(c=>c.packet.id.level===id.level&&c.packet.id.x===id.x&&c.packet.id.y===id.y);}
+  /** Prepare the actual material variant before any visibility switch. */
+  compileCell(id){
+    const cell=this.findCell(id);if(!cell)throw new Error('MISSING_RENDER_CELL');
+    return this.renderer.compileAsync(cell.mesh,this.camera,this.scene);
+  }
+  /** A bounded one-cell offscreen draw uploads vertex buffers without revealing
+   * the new cell. WebGL commands remain non-preemptible, so callers measure this
+   * separately instead of claiming a hard millisecond guarantee. */
+  warmCell(id){
+    const cell=this.findCell(id);if(!cell)throw new Error('MISSING_RENDER_CELL');
+    if(!this.warmTarget){
+      this.warmTarget=new THREE.WebGLRenderTarget(1,1,{depthBuffer:false});
+      this.warmScene=new THREE.Scene();
+      for(const object of this.scene.children)if(object.isLight)this.warmScene.add(object.clone());
+      this.warmCamera=new THREE.PerspectiveCamera(50,1,.01,50000);
+    }
+    const mesh=new THREE.Mesh(cell.mesh.geometry,cell.surfaceMaterial);mesh.frustumCulled=false;
+    const sphere=mesh.geometry.boundingSphere,extent=Math.max(1,sphere.radius);
+    this.warmCamera.position.copy(sphere.center).add(new THREE.Vector3(0,extent*2,extent*2));
+    this.warmCamera.lookAt(sphere.center);this.warmScene.add(mesh);
+    const previous=this.renderer.getRenderTarget();
+    try{
+      if(cell.surfaceMaterial.map)this.renderer.initTexture(cell.surfaceMaterial.map);
+      this.renderer.setRenderTarget(this.warmTarget);this.renderer.render(this.warmScene,this.warmCamera);
+    }finally{this.renderer.setRenderTarget(previous);mesh.removeFromParent();}
+  }
+  /** Imagery changes the material only; terrain vertices/collision are untouched. */
+  applyTexture(id,image){
+    const cell=this.findCell(id);if(!cell)throw new Error('MISSING_RENDER_CELL');
+    const texture=new THREE.DataTexture(image.rgba,image.width,image.width);
+    texture.colorSpace=THREE.SRGBColorSpace;texture.flipY=false;texture.generateMipmaps=false;
+    texture.minFilter=THREE.LinearFilter;texture.magFilter=THREE.LinearFilter;
+    texture.wrapS=texture.wrapT=THREE.ClampToEdgeWrapping;
+    texture.repeat.setScalar(image.uvScale);texture.offset.setScalar(image.uvOffset);texture.needsUpdate=true;
+    const material=new THREE.MeshStandardMaterial({map:texture,roughness:1,metalness:0});
+    try{this.renderer.initTexture(texture);}catch(error){texture.dispose();material.dispose();throw error;}
+    const previous=cell.surfaceMaterial;
+    if(cell.resources.has(previous)){
+      if(previous.map){previous.map.dispose();cell.resources.delete(previous.map);this.resources.delete(previous.map);}
+      previous.dispose();cell.resources.delete(previous);this.resources.delete(previous);
+    }
+    for(const resource of [material,texture]){this.own(resource);cell.resources.add(resource);}
+    cell.surfaceMaterial=material;if(!this.modes?.normals)cell.mesh.material=material;
   }
   setVisibleCells(ids){
     const key=id=>`${id.level}/${id.x}/${id.y}`;
@@ -136,7 +183,14 @@ export class TerrainView{
   }
   setModes({wireframe,normals,metricGrid}){
     this.modes={wireframe,normals,metricGrid};
-    for(const cell of this.cellViews){cell.wire.visible=wireframe;cell.mesh.material=normals?this.normalMaterial:cell.surfaceMaterial;}
+    for(const cell of this.cellViews){
+      if(wireframe&&!cell.wire){
+        const geometry=this.own(new THREE.WireframeGeometry(cell.mesh.geometry));cell.resources.add(geometry);
+        cell.wire=new THREE.LineSegments(geometry,this.wireMaterial);cell.root.add(cell.wire);
+      }
+      if(cell.wire)cell.wire.visible=wireframe;
+      cell.edge.visible=wireframe;cell.mesh.material=normals?this.normalMaterial:cell.surfaceMaterial;
+    }
     if(this.grid)this.grid.visible=metricGrid;
   }
   overview(){
@@ -174,7 +228,7 @@ export class TerrainView{
     const projected=marker.clone().project(this.camera);
     return {geometries:this.renderer.info.memory.geometries,textures:this.renderer.info.memory.textures,
       drawCalls:this.renderer.info.render.calls,altitudeAuthority:this.cellViews[0]?.packet.altitudeAuthority,
-      texturedCells:this.cellViews.filter(cell=>cell.surfaceMaterial!==this.surfaceMaterial).length,markerHeightMeters:MARKER_HEIGHT_METERS,
+      texturedCells:this.cellViews.filter(cell=>cell.surfaceMaterial.map && cell.surfaceMaterial!==this.surfaceMaterial).length,markerHeightMeters:MARKER_HEIGHT_METERS,
       markerEcef:this.markerEcef,markerNdc:projected.toArray(),
       geometryIds:this.cellViews.map(cell=>cell.mesh.geometry.uuid),
       cellResources:this.cellViews.map(cell=>({key:`web-mercator/${cell.packet.id.level}/${cell.packet.id.x}/${cell.packet.id.y}`,
@@ -185,6 +239,6 @@ export class TerrainView{
     if(this.disposed)return;this.disposed=true;cancelAnimationFrame(this.frame);
     this.observer.disconnect();this.controls.dispose();
     this.renderer.domElement.removeEventListener('webglcontextlost',this.contextLost);
-    this.clearPatch();this.renderer.dispose();this.renderer.forceContextLoss();this.renderer.domElement.remove();
+    this.clearPatch();this.warmTarget?.dispose();this.renderer.dispose();this.renderer.forceContextLoss();this.renderer.domElement.remove();
   }
 }
