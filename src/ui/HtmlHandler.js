@@ -12,8 +12,9 @@ export default class HtmlHandler {
       }
     });
 
-    this.loadCss('/address-form.css');
-    this.loadHtml('/address-form.html');
+    const baseUrl = import.meta.env.BASE_URL;
+    this.loadCss(`${baseUrl}address-form.css`);
+    this.loadHtml(`${baseUrl}address-form.html`);
   }
 
   loadCss(href) {
@@ -55,7 +56,7 @@ export default class HtmlHandler {
       this.validateAddress(address).then(isValid => {
         if (isValid) {
           window.savedAddress = address;
-          console.log('Adresse sauvegardée dans window.savedAddress :', window.savedAddress); 
+          console.log('Adresse sauvegardée dans window.savedAddress :', window.savedAddress);
           EventBus.emit('addressSaved', address);
           EventBus.emit('player:reposition');
           this.closeForm();
