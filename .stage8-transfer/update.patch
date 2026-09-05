@@ -1,19 +1,7 @@
 diff --git a/v2/demo/streaming/stream-session.mjs b/v2/demo/streaming/stream-session.mjs
-index 7ac16db..48f90ed 100644
+index 48f90ed..ca5002f 100644
 --- a/v2/demo/streaming/stream-session.mjs
 +++ b/v2/demo/streaming/stream-session.mjs
 @@ -130 +130 @@ export class StreamSession {
--      const value=this.loaded.get(key);this.view.removeCell(value.packet.id);this.loaded.delete(key);
-+      const value=this.loaded.get(key);this.view.removeCell(value.packet.id);this.loaded.delete(key);this.seen.delete(key);
-@@ -306 +306 @@ export class StreamSession {
--      bvhBuildCount:this.player.physics?.bvhBuildCount||0,
-+      trackedResidentKeys:this.seen?.size||0,bvhBuildCount:this.player.physics?.bvhBuildCount||0,
-@@ -329 +329 @@ export class StreamSession {
--  dispose(){this.stop();this.disposed=true;this.loaded.clear();this.events.abort();this.view.onBeforeFrame=null;this.player.beforeRespawn=null;this.panel.remove();window.__ZERANA_STREAM_DEBUG__={disposed:true};}
-+  dispose(){this.stop();this.disposed=true;this.loaded.clear();this.seen?.clear();this.events.abort();this.view.onBeforeFrame=null;this.player.beforeRespawn=null;this.panel.remove();window.__ZERANA_STREAM_DEBUG__={disposed:true};}
-diff --git a/v2/tests/browser/experience_smoke.py b/v2/tests/browser/experience_smoke.py
-index cf6a9e3..74b0579 100644
---- a/v2/tests/browser/experience_smoke.py
-+++ b/v2/tests/browser/experience_smoke.py
-@@ -180,0 +181 @@ async def run(url):
-+                    assert stream['trackedResidentKeys'] <= stream['cells']
+-      const value=this.loaded.get(key);this.view.removeCell(value.packet.id);this.loaded.delete(key);this.seen.delete(key);
++      const value=this.loaded.get(key);this.view.removeCell(value.packet.id);this.loaded.delete(key);

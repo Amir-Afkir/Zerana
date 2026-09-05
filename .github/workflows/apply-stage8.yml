@@ -16,7 +16,7 @@ jobs:
       - name: Verify exact reviewed patch
         run: |
           cp .stage8-transfer/update.patch "$RUNNER_TEMP/stage8.patch"
-          echo '75aed0785935092285463ccd0e40532362e501f6fba897434c1ec42f6d73a5e8  '"$RUNNER_TEMP/stage8.patch" | sha256sum -c -
+          echo 'b037671389fee14fd88c127575635b0ec5786eb076593f7bedf07d92c07c34ca  '"$RUNNER_TEMP/stage8.patch" | sha256sum -c -
       - uses: actions/checkout@v4
         with:
           ref: work/stage8-implementation
@@ -26,12 +26,12 @@ jobs:
         working-directory: target
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = ea9d54b1f9b552fea304160be5943e070cd9a567
+          test "$(git rev-parse HEAD)" = d1c7891bcb18f381fe3260c37febfac5f0bf3708
           git apply --check --index --unidiff-zero "$RUNNER_TEMP/stage8.patch"
           git apply --index --unidiff-zero "$RUNNER_TEMP/stage8.patch"
           git diff --cached --check
-          test "$(git write-tree)" = 97b24277c255d342833a870fd0ceb75cab08e6be
+          test "$(git write-tree)" = e9ac8f305be48a6713a10d1bec87b53ff2ab6b09
           git config user.name 'Zerana source transfer'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git commit -m 'fix(v2): bound visited-cell diagnostics to retained residency'
+          git commit -m 'refactor(v2): keep one eviction cleanup and retain the residency assertion'
           git push origin HEAD:refs/heads/work/stage8-implementation
