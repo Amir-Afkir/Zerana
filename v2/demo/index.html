@@ -10,12 +10,15 @@
   <main class="layout">
     <aside class="panel">
       <p class="eyebrow">ZERANA / WORLD ENGINE V2</p>
+      <p class="preview-nav"><a href="../">← Jeu actuel</a><span id="build-version">Préversion</span></p>
       <h1>Laboratoire terrain</h1>
+      <p class="preview-notice">Préversion expérimentale : pas encore de déplacement du joueur ni de monde continu.</p>
       <p class="intro">Terrain de validation ou données Mapbox. Les appels réels nécessitent un token public et une action explicite.</p>
       <form id="controls">
         <label>Source<select id="source-mode"><option value="synthetic">Synthétique — hors ligne</option><option value="mapbox">Mapbox — satellite et relief</option></select></label>
         <div id="provider-options" hidden>
           <label>Token Mapbox public (pk.)<input id="mapbox-token" type="password" autocomplete="off" spellcheck="false" placeholder="pk.…" /></label>
+          <p id="site-token-state" class="footnote"></p>
           <label class="consent"><input id="allow-preview" type="checkbox" /> J’accepte un aperçu sans altitude WGS84 certifiée.</label>
           <p class="footnote">Le datum Mapbox est mixte. Aucune correction géoïde n’est inventée. Token conservé en mémoire seulement. Requêtes pouvant être facturées par Mapbox.</p>
         </div>

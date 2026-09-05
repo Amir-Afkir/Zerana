@@ -1,4 +1,4 @@
-name: Zerana V2 - Geo Terrain and Raster CI
+name: Zerana V2 - Integrated Preview CI
 
 on:
   pull_request:
@@ -64,15 +64,16 @@ jobs:
           }
           const model = readFileSync('dist/models/DefaultAvatarPC.glb');
           assert.equal(model.subarray(0, 4).toString(), 'glTF');
-          console.log('Current game build and Pages asset paths verified. No deployment performed.');
           JS
 
   terrain-browser:
-    name: Terrain and raster - browser and Pages prefix
+    name: Combined preview - browser and Pages prefix
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -81,23 +82,29 @@ jobs:
         with:
           python-version: '3.12'
       - run: npm ci
-      - name: Build isolated demo with existing locked Vite and Three.js
-        run: npm --prefix v2 run demo:build
+      - name: Build combined V1 and V2 without production credentials
+        env:
+          VITE_MAPBOX_API_KEY: pk.ci-placeholder-not-a-valid-token
+        run: node scripts/build-pages.mjs
       - name: Install browser test dependency
         run: |
           python -m pip install -r v2/tests/browser/requirements.txt
           python -m playwright install --with-deps chromium
-      - name: Test built synthetic demo on a real HTTP subpath
+      - name: Test synthetic terrain regression
         run: npm --prefix v2 run demo:test
       - name: Test provider integration with deterministic HTTP fixtures
         run: python v2/tests/browser/provider_smoke.py
-      - name: Retain browser evidence and standalone demo
+      - name: Test combined site and public-site token fallback with fixtures
+        env:
+          ZERANA_MOCK_MAPBOX: '1'
+        run: python v2/tests/browser/preview_smoke.py
+      - name: Retain preview and sanitized browser evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: v2-raster-demo-and-evidence
+          name: v2-public-preview-and-evidence
           path: |
-            v2/demo-dist/
+            dist/
             v2/browser-results/
           retention-days: 7
           if-no-files-found: warn
