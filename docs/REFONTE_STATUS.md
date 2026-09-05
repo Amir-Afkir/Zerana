@@ -141,6 +141,19 @@ Le patch de départ conserve sa construction statique. Les commandes GPU restent
 non préemptibles. Les preuves longues, le LOD et les couches vectorielles ne sont
 pas considérés terminés par cette tranche. Voir `REFONTE_STAGE8.md` et ADR-008.
 
+### Étape 9 — noyau routier et diagnostic volontaire
+
+Adaptateur Streets v8/MVT borné, normalisation indépendante du renderer,
+coordonnées rationnelles, clipping demi-ouvert source/WorldCell et graphe
+cartographique (pas routable). Diagnostic d'axes sur les triangles du terrain,
+worker paresseux et cache mémoire décodé ; aucun appel routier au démarrage.
+
+35 tests CPU et 16 tests d'adaptateur ajoutés. Les résultats du navigateur,
+de la CI et du déploiement sont consignés dans la PR, sans les déduire de la
+présence du code. Largeurs, chaussées 3D, jonctions maillées, ponts/tunnels et
+streaming routier automatique restent à développer. Voir `REFONTE_STAGE9.md`
+et ADR-009, qui bornent aussi les promesses du plan de discussion.
+
 ## Ce qui reste à développer ou valider
 
 - Finir le Milestone 5 : réduire les pics d'intégration, confirmer les sessions
