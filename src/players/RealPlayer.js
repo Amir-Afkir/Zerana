@@ -1,8 +1,11 @@
 // RealPlayer.js
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader';
+
+const DEFAULT_MODEL_URL = `${import.meta.env.BASE_URL}models/DefaultAvatarPC.glb`;
+
 export default class RealPlayer {
-  constructor(scene, onLoaded, modelUrl = '/models/DefaultAvatarPC.glb', globeManager = null, cameraController = null, latitude = null, zoom = 17, chunkSize = null) {
+  constructor(scene, onLoaded, modelUrl = DEFAULT_MODEL_URL, globeManager = null, cameraController = null, latitude = null, zoom = 17, chunkSize = null) {
     this.loader = new GLTFLoader();
     this.model = null;
     this.modelUrl = modelUrl;
@@ -15,10 +18,8 @@ export default class RealPlayer {
 
     this.loader.load(modelUrl, (gltf) => {
       this.model = gltf.scene;
-      // Suppression de l'appel anticipé à setScaleFromChunk ici : l'échelle sera appliquée plus tard quand la latitude sera connue.
       scene.add(this.model);
 
-      // Cache a reference height so scaling stays stable across calls.
       const box = new THREE.Box3().setFromObject(this.model);
       const size = new THREE.Vector3();
       box.getSize(size);
@@ -44,7 +45,6 @@ export default class RealPlayer {
     const tileSizeMeters = (earthCircum * Math.cos(latitude * Math.PI / 180)) / Math.pow(2, zoom);
     const unitsPerMeter = chunkSize / tileSizeMeters;
 
-    // Target a ~human scale, regardless of the GLB unit system.
     const desiredHeightMeters = 1.75;
     const targetHeightUnits = desiredHeightMeters * unitsPerMeter;
     const baseHeight = this.baseHeight || 1;
