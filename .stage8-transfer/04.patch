@@ -1,0 +1,132 @@
+@@ -102 +102,2 @@ async function sha256(bytes) {
+-export async function loadMapboxPatch({ cells, subdivisions, token, allowPreview, signal, onProgress = () => {}, byteCache = null, onHttpAttempt = () => {} }) {
++export async function loadMapboxPatch({ cells, subdivisions, token, allowPreview, signal, onProgress = () => {}, byteCache = null, onHttpAttempt = () => {}, layers = 'all' }) {
++  if (!['all','terrain','imagery'].includes(layers)) throw new Error('INVALID_RASTER_LAYERS');
+@@ -108,2 +109,2 @@ export async function loadMapboxPatch({ cells, subdivisions, token, allowPreview
+-  const dem = planRasterTiles(cells, elevationZoom, 256, subdivisions, 1);
+-  const imagery = planRasterTiles(cells, imageryZoom, 256, 256, 1);
++  const dem = layers === 'imagery' ? [] : planRasterTiles(cells, elevationZoom, 256, subdivisions, 1);
++  const imagery = layers === 'terrain' ? [] : planRasterTiles(cells, imageryZoom, 256, 256, 1);
+@@ -113 +114 @@ export async function loadMapboxPatch({ cells, subdivisions, token, allowPreview
+-  mapboxTileUrl('elevation', dem[0], token);
++  mapboxTileUrl(dem.length ? 'elevation' : 'imagery', dem[0] || imagery[0], token);
+@@ -129 +130 @@ export async function loadMapboxPatch({ cells, subdivisions, token, allowPreview
+-    for (const layer of ['elevation', 'imagery']) {
++    for (const layer of [...(dem.length ? ['elevation'] : []), ...(imagery.length ? ['imagery'] : [])]) {
+@@ -152,3 +153,2 @@ export async function loadMapboxPatch({ cells, subdivisions, token, allowPreview
+-    const heightMosaic = new RasterMosaic(heights), colourMosaic = new RasterMosaic(colours);
+-    const source = rasterElevationSource(heightMosaic, { sourceId: 'mapbox.terrain-rgb', snapshotId,
+-      verticalDatum: MAPBOX_ELEVATION_DATUM }, { allowUnresolvedDatumPreview: true });
++    const source = heights.length ? rasterElevationSource(new RasterMosaic(heights), { sourceId: 'mapbox.terrain-rgb', snapshotId,
++      verticalDatum: MAPBOX_ELEVATION_DATUM }, { allowUnresolvedDatumPreview: true }) : null;
+@@ -156 +156,4 @@ export async function loadMapboxPatch({ cells, subdivisions, token, allowPreview
+-    for (const cell of cells) { aborted(signal); const texture = buildCellImagery(cell, colourMosaic); textures.set(texture.cellKey, texture); }
++    if (colours.length) {
++      const colourMosaic = new RasterMosaic(colours);
++      for (const cell of cells) { aborted(signal); const texture = buildCellImagery(cell, colourMosaic); textures.set(texture.cellKey, texture); }
++    }
+@@ -158 +161 @@ export async function loadMapboxPatch({ cells, subdivisions, token, allowPreview
+-      requestCount: httpAttempts, plannedRequestCount: tasks.length + 2, waterFallbackCount: evidence.filter(item => item.waterFallback).length };
++      requestCount: httpAttempts, plannedRequestCount: tasks.length + Number(dem.length > 0) + Number(imagery.length > 0), waterFallbackCount: evidence.filter(item => item.waterFallback).length };
+diff --git a/v2/demo/render/terrain-view.mjs b/v2/demo/render/terrain-view.mjs
+index 3972699..914cb1c 100644
+--- a/v2/demo/render/terrain-view.mjs
++++ b/v2/demo/render/terrain-view.mjs
+@@ -75,0 +76 @@ export class TerrainView{
++    this.previewMaterial=this.own(new THREE.MeshStandardMaterial({color:0x64796a,roughness:1,metalness:0}));
+@@ -99 +100 @@ export class TerrainView{
+-      let surfaceMaterial=this.surfaceMaterial;
++      let surfaceMaterial=packet.altitudeAuthority==='preview-only'?this.previewMaterial:this.surfaceMaterial;
+@@ -110 +111 @@ export class TerrainView{
+-      const wire=new THREE.LineSegments(own(new THREE.WireframeGeometry(geometry)),this.wireMaterial);
++      const wire=null; // Debug wire geometry is allocated only when requested.
+@@ -118 +119,2 @@ export class TerrainView{
+-      root.add(mesh,wire,new THREE.LineLoop(edgeGeometry,this.borderMaterial));
++      const edge=new THREE.LineLoop(edgeGeometry,this.borderMaterial);
++      root.add(mesh,edge);
+@@ -120 +122 @@ export class TerrainView{
+-      this.cellViews.push({packet,root,mesh,wire,surfaceMaterial,resources});
++      this.cellViews.push({packet,root,mesh,wire,edge,surfaceMaterial,resources});
+@@ -123,0 +126,45 @@ export class TerrainView{
++  findCell(id){return this.cellViews.find(c=>c.packet.id.level===id.level&&c.packet.id.x===id.x&&c.packet.id.y===id.y);}
++  /** Prepare the actual material variant before any visibility switch. */
++  compileCell(id){
++    const cell=this.findCell(id);if(!cell)throw new Error('MISSING_RENDER_CELL');
++    return this.renderer.compileAsync(cell.mesh,this.camera,this.scene);
++  }
++  /** A bounded one-cell offscreen draw uploads vertex buffers without revealing
++   * the new cell. WebGL commands remain non-preemptible, so callers measure this
++   * separately instead of claiming a hard millisecond guarantee. */
++  warmCell(id){
++    const cell=this.findCell(id);if(!cell)throw new Error('MISSING_RENDER_CELL');
++    if(!this.warmTarget){
++      this.warmTarget=new THREE.WebGLRenderTarget(1,1,{depthBuffer:false});
++      this.warmScene=new THREE.Scene();
++      for(const object of this.scene.children)if(object.isLight)this.warmScene.add(object.clone());
++      this.warmCamera=new THREE.PerspectiveCamera(50,1,.01,50000);
++    }
++    const mesh=new THREE.Mesh(cell.mesh.geometry,cell.surfaceMaterial);mesh.frustumCulled=false;
++    const sphere=mesh.geometry.boundingSphere,extent=Math.max(1,sphere.radius);
++    this.warmCamera.position.copy(sphere.center).add(new THREE.Vector3(0,extent*2,extent*2));
++    this.warmCamera.lookAt(sphere.center);this.warmScene.add(mesh);
++    const previous=this.renderer.getRenderTarget();
++    try{
++      if(cell.surfaceMaterial.map)this.renderer.initTexture(cell.surfaceMaterial.map);
++      this.renderer.setRenderTarget(this.warmTarget);this.renderer.render(this.warmScene,this.warmCamera);
++    }finally{this.renderer.setRenderTarget(previous);mesh.removeFromParent();}
++  }
++  /** Imagery changes the material only; terrain vertices/collision are untouched. */
++  applyTexture(id,image){
++    const cell=this.findCell(id);if(!cell)throw new Error('MISSING_RENDER_CELL');
++    const texture=new THREE.DataTexture(image.rgba,image.width,image.width);
++    texture.colorSpace=THREE.SRGBColorSpace;texture.flipY=false;texture.generateMipmaps=false;
++    texture.minFilter=THREE.LinearFilter;texture.magFilter=THREE.LinearFilter;
++    texture.wrapS=texture.wrapT=THREE.ClampToEdgeWrapping;
++    texture.repeat.setScalar(image.uvScale);texture.offset.setScalar(image.uvOffset);texture.needsUpdate=true;
++    const material=new THREE.MeshStandardMaterial({map:texture,roughness:1,metalness:0});
++    try{this.renderer.initTexture(texture);}catch(error){texture.dispose();material.dispose();throw error;}
++    const previous=cell.surfaceMaterial;
++    if(cell.resources.has(previous)){
++      if(previous.map){previous.map.dispose();cell.resources.delete(previous.map);this.resources.delete(previous.map);}
++      previous.dispose();cell.resources.delete(previous);this.resources.delete(previous);
++    }
++    for(const resource of [material,texture]){this.own(resource);cell.resources.add(resource);}
++    cell.surfaceMaterial=material;if(!this.modes?.normals)cell.mesh.material=material;
++  }
+@@ -139 +186,8 @@ export class TerrainView{
+-    for(const cell of this.cellViews){cell.wire.visible=wireframe;cell.mesh.material=normals?this.normalMaterial:cell.surfaceMaterial;}
++    for(const cell of this.cellViews){
++      if(wireframe&&!cell.wire){
++        const geometry=this.own(new THREE.WireframeGeometry(cell.mesh.geometry));cell.resources.add(geometry);
++        cell.wire=new THREE.LineSegments(geometry,this.wireMaterial);cell.root.add(cell.wire);
++      }
++      if(cell.wire)cell.wire.visible=wireframe;
++      cell.edge.visible=wireframe;cell.mesh.material=normals?this.normalMaterial:cell.surfaceMaterial;
++    }
+@@ -177 +231 @@ export class TerrainView{
+-      texturedCells:this.cellViews.filter(cell=>cell.surfaceMaterial!==this.surfaceMaterial).length,markerHeightMeters:MARKER_HEIGHT_METERS,
++      texturedCells:this.cellViews.filter(cell=>cell.surfaceMaterial.map && cell.surfaceMaterial!==this.surfaceMaterial).length,markerHeightMeters:MARKER_HEIGHT_METERS,
+@@ -188 +242 @@ export class TerrainView{
+-    this.clearPatch();this.renderer.dispose();this.renderer.forceContextLoss();this.renderer.domElement.remove();
++    this.clearPatch();this.warmTarget?.dispose();this.renderer.dispose();this.renderer.forceContextLoss();this.renderer.domElement.remove();
+diff --git a/v2/demo/runtime/player-session.mjs b/v2/demo/runtime/player-session.mjs
+index 34fe13c..a94de3d 100644
+--- a/v2/demo/runtime/player-session.mjs
++++ b/v2/demo/runtime/player-session.mjs
+@@ -47 +47,6 @@ export class PlayerSession {
+-      if (!this.active || /^(INPUT|SELECT|TEXTAREA)$/.test(event.target?.tagName) || event.target?.isContentEditable) return;
++      if (/^(INPUT|SELECT|TEXTAREA)$/.test(event.target?.tagName) || event.target?.isContentEditable) return;
++      const movement=['KeyW','KeyZ','KeyA','KeyQ','KeyS','KeyD','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'];
++      if(!this.active&&this.autoResume&&!event.repeat&&movement.includes(event.code)&&!this.runtimeError)this.start();
++      if(!this.active)return;
++      if(event.code==='Space'&&/^(BUTTON|SUMMARY)$/.test(event.target?.tagName))return;
++      if(this.autoResume&&movement.includes(event.code))this.view.renderer.domElement.focus({preventScroll:true});
+@@ -58,0 +64 @@ export class PlayerSession {
++      if(!this.active&&this.autoResume&&!this.runtimeError&&event.button===0)this.start();
+@@ -94 +100 @@ export class PlayerSession {
+-  start() {
++  start({focus=true}={}) {
+@@ -103 +109 @@ export class PlayerSession {
+-    this.view.renderer.domElement.focus({ preventScroll: true });
++    if(focus)this.view.renderer.domElement.focus({ preventScroll: true });
+@@ -170,0 +177 @@ export class PlayerSession {

@@ -1,0 +1,165 @@
++      mainThreadBvhBuildCount:this.physics.mainThreadBvhBuildCount,preparedBvhAdoptions:this.physics.preparedBvhAdoptions,
+diff --git a/v2/demo/streaming/cell-admission.mjs b/v2/demo/streaming/cell-admission.mjs
+new file mode 100644
+index 0000000..58f7246
+--- /dev/null
++++ b/v2/demo/streaming/cell-admission.mjs
+@@ -0,0 +1,48 @@
++import { TriangleIndex } from '../../src/physics/geometry.ts';
++
++/** One cell, explicit short stages, no secondary scheduler. The caller owns
++ * the ready ticket and commits physics/visibility only after this returns true. */
++export class CellAdmission {
++  constructor(ready, view, measure) {
++    this.ready = ready; this.view = view; this.measure = measure;
++    this.stage = 'validate'; this.staged = false; this.cancelled = false;
++    this.bundle = ready.value;
++    this.validator = this.bundle.colliderIndex ? null : TriangleIndex.adopt(
++      this.bundle.collider, this.bundle.packet.positions, this.bundle.packet.indices);
++  }
++  advance(deadline) {
++    const start = performance.now(), stage = this.stage;
++    try {
++      if (this.cancelled) return false;
++      if (this.error) throw this.error;
++      if (stage === 'validate') {
++        if (this.validator) {
++          let result;
++          do { result = this.validator.next(); } while (!result.done && performance.now() < deadline);
++          if (!result.done) return false;
++          this.bundle.colliderIndex = result.value;
++        }
++        this.stage = 'mesh';
++      } else if (stage === 'mesh') {
++        this.view.addCell(this.bundle.packet, this.bundle.texture, {visible:false});
++        this.staged = true; this.stage = 'shader';
++      } else if (stage === 'shader') {
++        this.stage = 'waiting-shader';
++        Promise.resolve(this.view.compileCell(this.bundle.packet.id)).then(() => {
++          if (!this.cancelled) this.stage = 'upload';
++        }).catch(() => { if (!this.cancelled) this.error = new Error('STREAM_SHADER_ERROR'); });
++      } else if (stage === 'upload') {
++        this.view.warmCell(this.bundle.packet.id); this.stage = 'commit';
++      }
++      return this.stage === 'commit';
++    } finally {
++      if (stage !== 'waiting-shader') this.measure(stage, performance.now() - start);
++    }
++  }
++  finish() { this.staged = false; this.cancelled = true; this.validator = null; }
++  cancel() {
++    this.cancelled = true; this.validator = null;
++    if (this.staged) this.view.removeCell(this.bundle.packet.id);
++    this.staged = false;
++  }
++}
+diff --git a/v2/demo/streaming/packet.mjs b/v2/demo/streaming/packet.mjs
+index 8cb9267..ea23790 100644
+--- a/v2/demo/streaming/packet.mjs
++++ b/v2/demo/streaming/packet.mjs
+@@ -5 +5 @@ export function packetCacheKey(job) {
+-  return `stream-packet-v1/WGS84-ECEF/terrain-v1/${job.source}/${job.profile}/` +
++  return `stream-packet-v2-bvh/WGS84-ECEF/terrain-v1/${job.source}/${job.profile}/` +
+@@ -11,0 +12 @@ export function packetBytes(bundle) {
++    (bundle.collider ? [bundle.collider.boxes,bundle.collider.links,bundle.collider.triangles,bundle.collider.sourceIds].reduce((n,a)=>n+a.byteLength,0) : 0) +
+@@ -42 +43,2 @@ export function transferBuffers(bundle) {
+-    ...(bundle.texture ? [bundle.texture.rgba.buffer] : [])];
++    ...(bundle.texture ? [bundle.texture.rgba.buffer] : []),
++    ...(bundle.collider ? [bundle.collider.boxes.buffer,bundle.collider.links.buffer,bundle.collider.triangles.buffer,bundle.collider.sourceIds.buffer] : [])];
+diff --git a/v2/demo/streaming/stream-session.mjs b/v2/demo/streaming/stream-session.mjs
+index b51d09e..7ac16db 100644
+--- a/v2/demo/streaming/stream-session.mjs
++++ b/v2/demo/streaming/stream-session.mjs
+@@ -1,0 +2 @@ import './stream.css';
++import { CellAdmission } from './cell-admission.mjs';
+@@ -79,0 +81,2 @@ export class StreamSession {
++    this.admission=null;this.imageFlight=null;this.imageReady=null;this.imageFailures=new Set();this.imageSerial=1000000;
++    this.imageryInstalled=0;this.maxStageMs={};this.maxCellWorkMs=0;this.currentCellWorkMs=0;
+@@ -108,0 +112,2 @@ export class StreamSession {
++    this.admission?.cancel();this.admission=null;
++    this.imageFlight?.controller.abort();this.imageFlight=null;this.imageReady=null;
+@@ -122 +127,4 @@ export class StreamSession {
+-    for(const key of remove){const value=this.loaded.get(key);this.view.removeCell(value.packet.id);this.loaded.delete(key);
++    for(const key of remove){
++      if(this.imageFlight?.key===key)this.imageFlight.controller.abort();
++      this.imageFailures?.delete(key);
++      const value=this.loaded.get(key);this.view.removeCell(value.packet.id);this.loaded.delete(key);
+@@ -133,2 +141 @@ export class StreamSession {
+-      const images=planRasterTiles([interest.id],Math.min(interest.id.level,18),256,256,1);
+-      grant=Math.min(2*(dem.length+images.length+2),HTTP_LIMIT-this.httpCharged);
++      grant=Math.min(2*(dem.length+1),HTTP_LIMIT-this.httpCharged);
+@@ -139 +146 @@ export class StreamSession {
+-    const input={...this.config,id:interest.id,persistent:this.persistent,httpGrant:grant};
++    const input={...this.config,id:interest.id,persistent:this.persistent,httpGrant:grant,layer:'terrain'};
+@@ -157,0 +165,49 @@ export class StreamSession {
++  measureStage(stage,ms){
++    if(stage==='upload'||stage==='imagery')this.didGpuWork=true;
++    this.maxStageMs[stage]=Math.max(this.maxStageMs[stage]||0,ms);
++    this.maxCommitMs=Math.max(this.maxCommitMs,ms);this.currentCellWorkMs+=ms;
++  }
++  /** One low-priority image job at a time, sharing workers and the SAME HTTP
++   * quota with terrain. A slow image never blocks terrain admission. */
++  updateImagery(){
++    if(this.config.source!=='mapbox')return;
++    if(this.imageReady){
++      const result=this.imageReady;this.imageReady=null;
++      const bundle=this.loaded.get(result.key);
++      if(bundle!==result.bundle||bundle.texture)return;
++      const next={...bundle,texture:result.texture};
++      try{
++        validatePacket(next,{...this.config,id:bundle.packet.id});
++        const bytes=packetBytes(next),extra=bytes-packetBytes(bundle);
++        if(!this.recycling.fits(extra,0)){this.trimRecycled(extra,0);this.imageReady=result;return;}
++        const start=performance.now();this.view.applyTexture(bundle.packet.id,result.texture);
++        this.recycling.resize(result.key,bytes);bundle.texture=result.texture;
++        this.imageryInstalled++;this.metricsDirty=true;this.pendingAttributions=result.attributions;
++        this.measureStage('imagery',performance.now()-start);
++      }catch{this.imageFailures.add(result.key);this.error='STREAM_IMAGERY_ERROR';}
++      return;
++    }
++    if(this.imageFlight||this.pool.available<1||this.scheduler.queuedBytes+this.scheduler.reservedBytes+STREAM_LIMITS.reservedCellBytes>STREAM_LIMITS.maxQueuedBytes)return;
++    const interest=[...this.plan.wanted].sort((a,b)=>Number(this.shown.has(b.key))-Number(this.shown.has(a.key))||a.priority-b.priority)
++      .find(i=>this.loaded.has(i.key)&&!this.loaded.get(i.key).texture&&!this.imageFailures.has(i.key));
++    if(!interest)return;
++    const bundle=this.loaded.get(interest.key),epoch=this.epoch;
++    const tiles=planRasterTiles([interest.id],Math.min(interest.id.level,18),256,256,1);
++    const grant=Math.min(2*(tiles.length+1),HTTP_LIMIT-this.httpCharged);
++    if(grant<=0){this.stop('STREAM_HTTP_BUDGET');return;}
++    this.httpCharged+=grant;
++    const controller=new AbortController(),ticket={key:`imagery:${interest.key}`,revision:++this.imageSerial};
++    const flight={key:interest.key,controller};this.imageFlight=flight;
++    const account=attempts=>{if(Number.isSafeInteger(attempts)&&attempts>=0&&attempts<=grant){this.httpCharged-=grant-attempts;this.httpActual+=attempts;}};
++    this.pool.run(ticket,{...this.config,id:interest.id,layer:'imagery',persistent:false,httpGrant:grant},controller.signal).then(result=>{
++      if(epoch!==this.epoch||this.disposed)return;
++      account(result.attempts);this.sourceCacheBytes=result.sourceCacheBytes;
++      if(!controller.signal.aborted&&this.loaded.get(interest.key)===bundle)
++        this.imageReady={key:interest.key,bundle,texture:result.texture,attributions:result.attributions};
++    }).catch(error=>{
++      if(epoch!==this.epoch||this.disposed)return;
++      account(error.attempts);
++      if(error.message!=='ABORTED')this.imageFailures.add(interest.key);
++      if(['PROVIDER_AUTH','STREAM_HTTP_BUDGET'].includes(error.message))this.stop(error.message);
++    }).finally(()=>{if(this.imageFlight===flight)this.imageFlight=null;});
++  }
+@@ -162 +218 @@ export class StreamSession {
+-    const frameStart=performance.now();
++    const frameStart=performance.now();this.didGpuWork=false;
+@@ -176,3 +232,8 @@ export class StreamSession {
+-      // At most one cell commit per frame, and never begin after the soft budget.
+-      if(performance.now()-frameStart<STREAM_LIMITS.uploadBudgetMs){
+-        const ready=this.scheduler.ready();
++      // Cooperative validation, mesh creation, shader compilation and upload
++      // happen on separate frames. Safety/collision commits remain atomic.
++      if(this.admission&&!this.scheduler.isReady(this.admission.ready.ticket)){
++        this.admission.cancel();this.admission=null;
++      }
++      const deadline=frameStart+STREAM_LIMITS.uploadBudgetMs;
++      if(performance.now()<deadline){
++        const ready=this.admission?.ready||this.scheduler.ready();
+@@ -187 +247,0 @@ export class StreamSession {
+-            const start=performance.now(),bundle=ready.value;
+@@ -189,17 +249,25 @@ export class StreamSession {
+-              // Source snapshots can differ. Concrete shared keys, vertices and normals
+-              // must still agree, otherwise keep the last valid surface and stop this cell.
+-              const existing=[...this.loaded.values()].map(v=>v.packet),next=[...existing,bundle.packet];
+-              // Only the new cell's four shared edges can introduce a new seam.

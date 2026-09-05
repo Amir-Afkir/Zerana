@@ -1,0 +1,161 @@
++Le quota reste par activation, pas par compte ni par journée.
++
++Le mode manuel documenté garde les anciens essais hors ligne. Les tests de ce
++mode ne remplacent pas le nouveau test de démarrage automatique. Les attributions
++restent visibles et dédoublonnées, conformément aux règles Mapbox et au TileJSON.
++
++## Vérifications et limites
++
++Tests d'équivalence des requêtes BVH à cinq positions géographiques ; corruption
++de format, indices, positions, boîtes, arités et liens ; validation coopérative,
++activation incrémentale, LRU et tickets périmés. Les tests navigateur utilisent
++les entrées réelles et les workers réellement construits par Vite.
++
++Les sondes de heap après GC sur 120 secondes sont un contrôle borné de rétention,
++non un benchmark matériel ou une preuve sur plusieurs heures. Le contrôle Mapbox
++réel est opt-in et plafonné à 96 appels, pas une preuve de couverture mondiale.
++La vérité géographique, les formules du Geo Kernel et les seuils des raccords
++restent inchangés. LOD, datum certifié et couches vectorielles restent hors tranche.
++
++Références : documentation Mapbox « Attribution » et « How to use Mapbox securely » ;
++documentation Three.js WebGLRenderer (`compileAsync`, `initTexture`).
+diff --git a/v2/demo/attribution.mjs b/v2/demo/attribution.mjs
+new file mode 100644
+index 0000000..d7c3300
+--- /dev/null
++++ b/v2/demo/attribution.mjs
+@@ -0,0 +1,43 @@
++/** De-duplicate provider credits, never remove an unknown required credit.
++ * Only text and HTTPS links are copied from the untrusted TileJSON HTML. */
++export function renderAttribution(container, values) {
++  const entries = new Map();
++  const add = (label, href = null) => {
++    label = label.replace(/\s+/g, ' ').trim();
++    if (!label || /^[©|·,\s]+$/.test(label)) return;
++    let url;
++    if (href) {
++      try { url = new URL(href); } catch { return; }
++      if (url.protocol === 'http:') url.protocol = 'https:';
++      if (url.protocol !== 'https:') return;
++    }
++    const name = label.replace(/^©\s*/, '').toLowerCase();
++    let key = `${label}|${url?.href || ''}`;
++    if (name === 'mapbox') { key = 'mapbox'; label = '© Mapbox'; }
++    if (name === 'openstreetmap' || name === 'openstreetmap contributors') { key = 'osm'; label = '© OpenStreetMap'; }
++    if (name === 'maxar') { key = 'maxar'; label = '© Maxar'; }
++    if (name === 'improve this map') key = 'feedback';
++    if (!entries.has(key)) entries.set(key, {label, href:url?.href});
++  };
++  for (const value of values) {
++    const parsed = new DOMParser().parseFromString(value, 'text/html');
++    const visit = node => {
++      if (node.nodeType === Node.TEXT_NODE) { add(node.textContent); return; }
++      if (node.nodeName === 'A') { add(node.textContent, node.getAttribute('href')); return; }
++      if (['SCRIPT','STYLE','IFRAME','OBJECT'].includes(node.nodeName)) return;
++      for (const child of node.childNodes) visit(child);
++    };
++    visit(parsed.body);
++  }
++  // Minimum credits for our terrain/satellite combination, including fallback
++  // for a provider response with only a partial attribution fixture.
++  if (!entries.has('mapbox')) add('© Mapbox', 'https://www.mapbox.com/about/maps');
++  if (!entries.has('osm')) add('© OpenStreetMap', 'https://www.openstreetmap.org/copyright/');
++  if (!entries.has('maxar')) add('© Maxar', 'https://www.maxar.com/');
++  if (!entries.has('feedback')) add('Improve this map', 'https://apps.mapbox.com/feedback/');
++  container.replaceChildren(...[...entries.values()].flatMap(({label, href}, i) => {
++    const node = document.createElement(href ? 'a' : 'span'); node.textContent = label;
++    if (href) { node.href = href; node.rel = 'noopener noreferrer'; node.target = '_blank'; }
++    return i ? [document.createTextNode(' · '), node] : [node];
++  }));
++}
+diff --git a/v2/demo/experience.css b/v2/demo/experience.css
+new file mode 100644
+index 0000000..5ffa8d9
+--- /dev/null
++++ b/v2/demo/experience.css
+@@ -0,0 +1,30 @@
++/* Compact default experience. All mathematical diagnostics remain in details. */
++.layout { grid-template-columns: 300px minmax(0,1fr); }
++.panel { padding: 26px 20px; }
++h1 { font-size: 28px; line-height: 1.15; }
++.intro { margin-bottom: 22px; font-size: 13px; }
++label, input, select, button { font-size: 13px; }
++#build { padding: 12px; margin-bottom: 8px; }
++details { margin: 12px 0; border-top: 1px solid #2b3847; padding-top: 12px; }
++summary { font-size: 12px; color: #adc4d6; cursor: pointer; padding: 6px 0; }
++details[open] > summary { margin-bottom: 14px; color: #76ddb4; }
++input[type=password] { width: 100%; padding: 9px; margin-top: 7px; border: 1px solid #354559; border-radius: 6px; background: #0d141d; }
++.play-guide { font-size: 12px; color: #a6b9c9; line-height: 1.9; padding: 14px 0; border-bottom: 1px solid #2b3847; }
++.play-guide strong { color: #dce5ed; font-weight: 600; }
++.preview-notice { font-size: 11px; line-height: 1.65; }
++.preview-nav { margin-top: 24px; font-size: 10px; }
++#status { min-height: 0; margin: 14px 0 0; font-size: 12px; }
++#runtime-tools section { padding: 12px 0; }
++#runtime-tools h2 { font-size: 15px; }
++#attribution { max-width: calc(100% - 20px); gap: 8px; padding: 4px 7px; font-size: 11px; line-height: 1.6; border-radius: 4px; }
++#attribution a { white-space: nowrap; }
++#attribution .mapbox-logo { flex-shrink: 0; }
++#provider-attribution { flex: 1; }
++#uv-legend { bottom: 42px; }
++:focus-visible { outline: 2px solid #76ddb4; outline-offset: 3px; }
++@media(max-width:760px) {
++  .layout { grid-template-columns: 1fr; grid-template-rows: 65dvh auto; height: auto; }
++  #viewport { min-height: 65dvh; }
++  .panel { padding: 20px; }
++  #attribution { right: 6px; bottom: 6px; max-width: calc(100% - 12px); font-size: 10px; }
++}
+diff --git a/v2/demo/index.html b/v2/demo/index.html
+index 59a0320..4c0dcb1 100644
+--- a/v2/demo/index.html
++++ b/v2/demo/index.html
+@@ -7 +7 @@
+-  <title>Zerana V2 — Laboratoire terrain</title>
++  <title>Zerana V2 — Explorer</title>
+@@ -12,5 +12,3 @@
+-      <p class="eyebrow">ZERANA / WORLD ENGINE V2</p>
+-      <p class="preview-nav"><a href="../">← Jeu actuel</a><span id="build-version">Préversion</span></p>
+-      <h1>Laboratoire terrain</h1>
+-      <p class="preview-notice">Préversion expérimentale : joueur métrique et streaming à activer dans « Monde continu ». LOD fixe, performances encore à optimiser.</p>
+-      <p class="intro">Terrain de validation ou données Mapbox. Les appels réels nécessitent un token public et une action explicite.</p>
++      <p class="eyebrow">ZERANA / PRÉVERSION V2</p>
++      <h1>Explore le monde.</h1>
++      <p class="intro">Le terrain se charge autour de toi. Déplace-toi directement au clavier.</p>
+@@ -18,23 +16,38 @@
+-        <label>Source<select id="source-mode"><option value="synthetic">Synthétique — hors ligne</option><option value="mapbox">Mapbox — satellite et relief</option></select></label>
+-        <div id="provider-options" hidden>
+-          <label>Token Mapbox public (pk.)<input id="mapbox-token" type="password" autocomplete="off" spellcheck="false" placeholder="pk.…" /></label>
+-          <p id="site-token-state" class="footnote"></p>
+-          <label class="consent"><input id="allow-preview" type="checkbox" /> J’accepte un aperçu sans altitude WGS84 certifiée.</label>
+-          <p class="footnote">Le datum Mapbox est mixte. Aucune correction géoïde n’est inventée. Token conservé en mémoire seulement. Requêtes pouvant être facturées par Mapbox.</p>
+-        </div>
+-        <label for="place">Point de contrôle</label>
+-        <select id="place">
+-          <option value="paris">Paris</option>
+-          <option value="equator">Équateur</option>
+-          <option value="tanger">Tanger</option>
+-          <option value="tokyo">Tokyo</option>
+-          <option value="antimeridian">Antiméridien</option>
+-          <option value="north">Haute latitude</option>
+-        </select>
+-        <div class="fields">
+-          <label>Longitude (°)<input id="longitude" type="number" step="any" value="2.35" required /></label>
+-          <label>Latitude (°)<input id="latitude" type="number" step="any" value="48.86" required /></label>
+-        </div>
+-        <div class="fields">
+-          <label>Cellules<select id="side"><option value="1">1 cellule</option><option value="2">4 cellules</option><option value="3">9 cellules</option></select></label>
+-          <label>Niveau<select id="level"><option>15</option><option selected>17</option><option>19</option><option>21</option></select></label>
++        <label>Monde<select id="source-mode"><option value="synthetic">Terrain de test — hors ligne</option><option value="mapbox">Monde réel — satellite</option></select></label>
++        <label>Lieu<select id="place">
++          <option value="paris">Paris</option><option value="tanger">Tanger</option><option value="tokyo">Tokyo</option>
++          <option value="equator">Équateur</option><option value="antimeridian">Antiméridien</option><option value="north">Haute latitude</option>
++        </select></label>
++        <button type="submit" id="build">Explorer ce lieu</button>
++        <button type="button" id="cancel-load" hidden>Annuler le chargement</button>
++        <details id="world-options">
++          <summary>Lieu précis et réglages</summary>
++          <div class="fields">
++            <label>Longitude (°)<input id="longitude" type="number" step="any" value="2.35" required /></label>
++            <label>Latitude (°)<input id="latitude" type="number" step="any" value="48.86" required /></label>
++          </div>
++          <div class="fields">
++            <label>Départ<select id="side"><option value="1">1 cellule</option><option value="2">4 cellules</option><option value="3">9 cellules</option></select></label>

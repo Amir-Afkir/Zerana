@@ -1,0 +1,133 @@
+-              const neighbors=scheme.getNeighbors(bundle.packet.id).map(id=>this.loaded.get(streamCellKey(id))?.packet).filter(Boolean);
+-              const seams=measureTerrainSeams([bundle.packet,...neighbors],this.player.player.frame,{allowSourceSnapshots:true});
+-              if(seams.mismatchedKeys||seams.maxGapMeters>.001||seams.maxNormalDelta>.001)throw new Error('STREAM_SEAM_MISMATCH');
+-              this.view.addCell(bundle.packet,bundle.texture,{visible:!this.sliding});
+-              try{this.player.physics.syncPackets(next);}catch(error){this.view.removeCell(bundle.packet.id);throw error;}
+-              this.loaded.set(ready.ticket.key,bundle);
+-              this.recycling.insert(ready.ticket.key,packetBytes(bundle));
+-              this.scheduler.installed(ready.ticket);this.installed++;
+-              if(!this.sliding)this.shown.add(ready.ticket.key);
+-              this.metricsDirty=true;if(bundle.attributions?.length)this.pendingAttributions=bundle.attributions;
+-              this.peakCells=Math.max(this.peakCells,this.loaded.size);
+-            }catch(error){this.scheduler.fail(ready.ticket,error.message,this.now,false);this.error=error.message;}
+-            this.maxCommitMs=Math.max(this.maxCommitMs,performance.now()-start);
++              if(!this.admission){
++                this.currentCellWorkMs=0;
++                this.admission=new CellAdmission(ready,this.view,(stage,ms)=>this.measureStage(stage,ms));
++              }
++              const complete=this.admission.advance(deadline);
++              if(complete&&performance.now()<deadline){
++                const started=performance.now(),bundle=ready.value;
++                const existing=[...this.loaded.values()].map(v=>v.packet),next=[...existing,bundle.packet];
++                const neighbors=scheme.getNeighbors(bundle.packet.id).map(id=>this.loaded.get(streamCellKey(id))?.packet).filter(Boolean);
++                const seams=measureTerrainSeams([bundle.packet,...neighbors],this.player.player.frame,{allowSourceSnapshots:true});
++                if(seams.mismatchedKeys||seams.maxGapMeters>.001||seams.maxNormalDelta>.001)throw new Error('STREAM_SEAM_MISMATCH');
++                this.player.physics.syncPackets(next,new Map([[bundle.packet,bundle.colliderIndex]]));
++                this.loaded.set(ready.ticket.key,bundle);this.recycling.insert(ready.ticket.key,packetBytes(bundle));
++                this.scheduler.installed(ready.ticket);this.installed++;
++                this.admission.finish();this.admission=null;
++                if(!this.sliding){this.shown.add(ready.ticket.key);this.view.setVisibleCells([...this.loaded.values()].map(v=>v.packet.id));}
++                this.metricsDirty=true;if(bundle.attributions?.length)this.pendingAttributions=bundle.attributions;
++                this.peakCells=Math.max(this.peakCells,this.loaded.size);
++                this.measureStage('commit',performance.now()-started);
++                this.maxCellWorkMs=Math.max(this.maxCellWorkMs,this.currentCellWorkMs);
++              }
++            }catch(error){
++              this.admission?.cancel();this.admission=null;
++              this.scheduler.fail(ready.ticket,error.message,this.now,false);this.error=error.message;
++            }
+@@ -214,0 +283,2 @@ export class StreamSession {
++        const imageReservation=(this.imageFlight||this.imageReady)?STREAM_LIMITS.reservedCellBytes:0;
++        if(this.scheduler.queuedBytes+this.scheduler.reservedBytes+imageReservation+STREAM_LIMITS.reservedCellBytes>STREAM_LIMITS.maxQueuedBytes)break;
+@@ -216,0 +287,4 @@ export class StreamSession {
++      if(this.active){
++        if(this.imageFlight && (!this.plan.wanted.some(i=>i.key===this.imageFlight.key) || this.scheduler.snapshot().states.QUEUED>0))this.imageFlight.controller.abort();
++        if(!this.admission&&!this.didGpuWork&&performance.now()<deadline)this.updateImagery();
++      }
+@@ -232,0 +307,5 @@ export class StreamSession {
++      mainThreadBvhBuildCount:this.player.physics?.mainThreadBvhBuildCount||0,
++      preparedBvhAdoptions:this.player.physics?.preparedBvhAdoptions||0,
++      admissionStage:this.admission?.stage||null,maxStageMs:this.maxStageMs||{},maxCellWorkMs:this.maxCellWorkMs||0,
++      imageryInstalled:this.imageryInstalled||0,imageryPending:!!(this.imageFlight||this.imageReady),
++      imageryReservationBytes:(this.imageFlight||this.imageReady)?STREAM_LIMITS.reservedCellBytes:0,
+@@ -245 +324 @@ export class StreamSession {
+-      ['Requêtes Mapbox',`${summary.httpActual} / ${HTTP_LIMIT}`],['Commit cellule max.',`${summary.maxCommitMs.toFixed(1)} ms`]];
++      ['Requêtes Mapbox',`${summary.httpActual} / ${HTTP_LIMIT}`],['Étape d’intégration max.',`${summary.maxCommitMs.toFixed(1)} ms`]];
+diff --git a/v2/demo/streaming/terrain.worker.mjs b/v2/demo/streaming/terrain.worker.mjs
+index ca38157..3f9125f 100644
+--- a/v2/demo/streaming/terrain.worker.mjs
++++ b/v2/demo/streaming/terrain.worker.mjs
+@@ -0,0 +1 @@
++import { TriangleIndex } from '../../src/physics/geometry.ts';
+@@ -21,0 +23,11 @@ self.onmessage = async ({data}) => {
++    if (job.layer === 'imagery') {
++      if (job.source !== 'mapbox') throw new Error('INVALID_STREAM_JOB');
++      const result = await loadMapboxPatch({cells:[job.id],subdivisions:job.subdivisions,token:job.token,
++        allowPreview:job.allowPreview,signal:controller.signal,byteCache,layers:'imagery',
++        onHttpAttempt:()=>{if(attempts>=job.httpGrant)throw new Error('STREAM_HTTP_BUDGET');attempts++;}});
++      const texture = result.textures.get(`${job.id.level}/${job.id.x}/${job.id.y}`);
++      if (controller.signal.aborted) throw new DOMException('Cancelled','AbortError');
++      self.postMessage({kind:'result',ticket,texture,attributions:result.attributions,evidence:result.evidence,
++        attempts,sourceCacheBytes:byteCache.bytes},[texture.rgba.buffer]);
++      return;
++    }
+@@ -26 +38 @@ self.onmessage = async ({data}) => {
+-        token:job.token,allowPreview:job.allowPreview,signal:controller.signal,byteCache,
++        token:job.token,allowPreview:job.allowPreview,signal:controller.signal,byteCache,layers:job.layer==='terrain'?'terrain':'all',
+@@ -32,0 +45 @@ self.onmessage = async ({data}) => {
++      bundle.collider = new TriangleIndex(packet.positions,packet.indices).snapshot();
+@@ -37,0 +51 @@ self.onmessage = async ({data}) => {
++    if (!bundle.collider) throw new Error('INVALID_PREPARED_COLLIDER');
+diff --git a/v2/src/physics/geometry.ts b/v2/src/physics/geometry.ts
+index 94b7651..b2aec5f 100644
+--- a/v2/src/physics/geometry.ts
++++ b/v2/src/physics/geometry.ts
+@@ -92 +92,2 @@ export function segmentTriangle(p: Vec3,q: Vec3,t: Triangle): {distance: number;
+-interface Leaf { readonly box: Box; readonly triangles: readonly Triangle[]; }
++interface IndexedTriangle extends Triangle { readonly sourceIndex: number; }
++interface Leaf { readonly box: Box; readonly triangles: readonly IndexedTriangle[]; }
+@@ -97 +98,2 @@ export class TriangleIndex {
+-  private readonly root: Node;
++  private readonly root: Node | null;
++  private readonly prepared: PreparedTriangleIndex | null = null;
+@@ -107 +109 @@ export class TriangleIndex {
+-    const triangles: Triangle[]=[];
++    const triangles: IndexedTriangle[]=[];
+@@ -109 +111 @@ export class TriangleIndex {
+-      const t={a:read(indices[i]!),b:read(indices[i+1]!),c:read(indices[i+2]!)};
++      const t={a:read(indices[i]!),b:read(indices[i+1]!),c:read(indices[i+2]!),sourceIndex:i/3};
+@@ -113 +115 @@ export class TriangleIndex {
+-    const build=(items: Triangle[]): Node=>{
++    const build=(items: IndexedTriangle[]): Node=>{
+@@ -127,0 +130,79 @@ export class TriangleIndex {
++  /** Transferable snapshot. Triangles are exact copies of the Float32 render
++   * coordinates; no extra quantisation, rotation or world-origin offset. */
++  snapshot(): PreparedTriangleIndex {
++    if (this.prepared) throw new Error('An adopted collider is owned by the physics world');
++    const boxes: number[] = [], links: number[] = [], triangles: number[] = [], sourceIds: number[] = [];
++    const visit = (node: Node): number => {
++      const id = boxes.length / 6;
++      boxes.push(...node.box.min, ...node.box.max); links.push(-1, -1, 0, 0);
++      if ('triangles' in node) {
++        links[id * 4 + 2] = triangles.length / 9; links[id * 4 + 3] = node.triangles.length;
++        for (const t of node.triangles) { triangles.push(...t.a, ...t.b, ...t.c); sourceIds.push(t.sourceIndex); }
++      } else { links[id * 4] = visit(node.left); links[id * 4 + 1] = visit(node.right); }
++      return id;
++    };
++    visit(this.root!);
++    return { version: 'cell-bvh-v1', boxes: new Float32Array(boxes), links: new Int32Array(links),
++      triangles: new Float32Array(triangles), sourceIds: new Uint32Array(sourceIds) };
++  }
++  /** Validation is cooperative (one batch per next()). The caller transfers
++   * ownership of snapshot arrays after success; never mutate or retransfer them.
++   * No sorting, tree building or vertex copying takes place on the main thread. */
++  static *adopt(snapshot: PreparedTriangleIndex, positions: Float32Array,
++    indices: Uint16Array | Uint32Array): Generator<void, TriangleIndex, undefined> {
++    const invalid = (): never => { throw new Error('INVALID_PREPARED_COLLIDER'); };
++    const n = indices.length / 3;
++    if (!(positions instanceof Float32Array) || !(indices instanceof Uint16Array || indices instanceof Uint32Array) ||
++      !Number.isInteger(n) || n < 1 || n > 131072 || positions.length % 3 || !snapshot ||
++      snapshot.version !== 'cell-bvh-v1' || !(snapshot.boxes instanceof Float32Array) ||
++      !(snapshot.links instanceof Int32Array) || !(snapshot.triangles instanceof Float32Array) ||
++      !(snapshot.sourceIds instanceof Uint32Array)) invalid();
++    const nodes = snapshot.boxes.length / 6, { boxes, links, triangles, sourceIds } = snapshot;

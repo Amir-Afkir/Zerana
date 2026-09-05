@@ -1,0 +1,202 @@
++    if (!Number.isInteger(nodes) || nodes < 1 || nodes > 2 * n - 1 || links.length !== 4 * nodes ||
++      triangles.length !== n * 9 || sourceIds.length !== n) invalid();
++    for (let i = 0; i < positions.length; i++) {
++      if (!Number.isFinite(positions[i]!)) invalid();
++      if (i % 384 === 383) yield;
++    }
++    const idsSeen = new Uint8Array(n), rangesSeen = new Uint8Array(n), parents = new Uint8Array(nodes);
++    for (let t = 0; t < n; t++) {
++      const id = sourceIds[t]!;
++      if (id >= n || idsSeen[id]) invalid(); idsSeen[id] = 1;
++      for (let j = 0; j < 9; j++) {
++        const index = indices[id * 3 + Math.floor(j / 3)]! * 3 + j % 3;
++        const value = triangles[t * 9 + j]!;
++        if (index >= positions.length || !Number.isFinite(value) || value !== positions[index]) invalid();
++      }
++      const o = t * 9;
++      const a: Vec3 = [triangles[o]!, triangles[o+1]!, triangles[o+2]!];
++      const b: Vec3 = [triangles[o+3]!, triangles[o+4]!, triangles[o+5]!];
++      const c: Vec3 = [triangles[o+6]!, triangles[o+7]!, triangles[o+8]!];
++      if (length(cross(sub(b, a), sub(c, a))) < 1e-12) invalid();
++      if (t % 128 === 127) yield;
++    }
++    for (let i = 0; i < nodes; i++) {
++      const b = i * 6, o = i * 4, left = links[o]!, right = links[o+1]!, start = links[o+2]!, count = links[o+3]!;
++      for (let j = 0; j < 3; j++) if (!Number.isFinite(boxes[b+j]!) || !Number.isFinite(boxes[b+j+3]!) || boxes[b+j]! > boxes[b+j+3]!) invalid();
++      if (left === -1 && right === -1) {
++        if (start < 0 || count < 1 || count > 8 || start + count > n) invalid();
++        for (let t = start; t < start + count; t++) {
++          if (rangesSeen[t]) invalid(); rangesSeen[t] = 1;
++          for (let j = 0; j < 9; j++) {
++            const v = triangles[t*9+j]!, axis = j%3;
++            if (v < boxes[b+axis]! || v > boxes[b+axis+3]!) invalid();
++          }
++        }
++      } else {
++        if (left <= i || right <= i || left >= nodes || right >= nodes || left === right || count !== 0 || start !== 0) invalid();
++        for (const child of [left, right]) {
++          if (parents[child]) invalid(); parents[child] = 1;
++          for (let j = 0; j < 3; j++) if (boxes[child*6+j]! < boxes[b+j]! || boxes[child*6+j+3]! > boxes[b+j+3]!) invalid();
++        }
++      }
++      if (i % 128 === 127) yield;
++    }
++    if (parents[0] || parents.subarray(1).some(v => v !== 1) || rangesSeen.some(v => v !== 1)) invalid();
++    const index = Object.create(TriangleIndex.prototype) as TriangleIndex;
++    Object.defineProperties(index, { root: { value: null }, prepared: { value: snapshot }, triangleCount: { value: n } });
++    return index;
++  }
+@@ -128,0 +210,16 @@ export class TriangleIndex {
++    if (this.prepared) {
++      const { boxes, links, triangles } = this.prepared, stack = [0], found: Triangle[] = [];
++      while (stack.length) {
++        const id = stack.pop()!, b = id*6, o = id*4;
++        let intersects = true;
++        for (let j = 0; j < 3; j++) if (boxes[b+j]! > box.max[j]! || boxes[b+j+3]! < box.min[j]!) intersects = false;
++        if (!intersects) continue;
++        if (links[o] !== -1) { stack.push(links[o+1]!, links[o]!); continue; }
++        for (let t = links[o+2]!; t < links[o+2]! + links[o+3]!; t++) {
++          const p = t*9;
++          found.push({ a: [triangles[p]!,triangles[p+1]!,triangles[p+2]!],
++            b: [triangles[p+3]!,triangles[p+4]!,triangles[p+5]!], c: [triangles[p+6]!,triangles[p+7]!,triangles[p+8]!] });
++        }
++      }
++      return found;
++    }
+@@ -134 +231 @@ export class TriangleIndex {
+-    visit(this.root);return found;
++    visit(this.root!);return found;
+@@ -136,0 +234,9 @@ export class TriangleIndex {
++
++/** Arrays are transferred, not structured-cloned object trees. */
++export interface PreparedTriangleIndex {
++  readonly version: 'cell-bvh-v1';
++  readonly boxes: Float32Array;
++  readonly links: Int32Array;
++  readonly triangles: Float32Array;
++  readonly sourceIds: Uint32Array;
++}
+diff --git a/v2/src/physics/terrain-physics.ts b/v2/src/physics/terrain-physics.ts
+index 451d79d..698bf1e 100644
+--- a/v2/src/physics/terrain-physics.ts
++++ b/v2/src/physics/terrain-physics.ts
+@@ -41,0 +42 @@ export class TerrainPhysics implements PhysicsWorld {
++  private adopted = 0;
+@@ -69 +70 @@ export class TerrainPhysics implements PhysicsWorld {
+-  syncPackets(packets: readonly TerrainCellPacket[]): void {
++  syncPackets(packets: readonly TerrainCellPacket[], prepared: ReadonlyMap<TerrainCellPacket, TriangleIndex> = new Map()): void {
+@@ -84 +85,3 @@ export class TerrainPhysics implements PhysicsWorld {
+-      return {packet:p,anchor:cell,index:new TriangleIndex(p.positions,p.indices),
++      const index = prepared.get(p) ?? new TriangleIndex(p.positions,p.indices);
++      if (!(index instanceof TriangleIndex) || index.triangleCount !== p.indices.length/3) throw new Error('INVALID_PREPARED_COLLIDER');
++      return {packet:p,anchor:cell,index,
+@@ -88 +91,3 @@ export class TerrainPhysics implements PhysicsWorld {
+-    this.built += next.filter(c => old.get(key(c.packet)) !== c).length;
++    const added = next.filter(c => old.get(key(c.packet)) !== c);
++    this.built += added.length;
++    this.adopted += added.filter(c => prepared.has(c.packet)).length;
+@@ -104,0 +110,2 @@ export class TerrainPhysics implements PhysicsWorld {
++  get mainThreadBvhBuildCount(): number { return this.built - this.adopted; }
++  get preparedBvhAdoptions(): number { return this.adopted; }
+diff --git a/v2/src/streaming/recycling.ts b/v2/src/streaming/recycling.ts
+index 526a639..b33e945 100644
+--- a/v2/src/streaming/recycling.ts
++++ b/v2/src/streaming/recycling.ts
+@@ -18,0 +19,6 @@ export class RecyclingIndex {
++  resize(key: string, bytes: number): void {
++    const entry = this.entries.get(key);
++    if (!entry || !Number.isSafeInteger(bytes) || bytes < 1 || this.bytes - entry.bytes + bytes > this.maxBytes)
++      throw new RangeError('RECYCLING_CAPACITY');
++    this.usedBytes += bytes - entry.bytes; entry.bytes = bytes;
++  }
+diff --git a/v2/src/streaming/scheduler.ts b/v2/src/streaming/scheduler.ts
+index 319f479..2ef364c 100644
+--- a/v2/src/streaming/scheduler.ts
++++ b/v2/src/streaming/scheduler.ts
+@@ -83,0 +84,4 @@ export class CellScheduler<T> {
++  isReady(ticket: CellTicket): boolean {
++    const e = this.entries.get(ticket.key);
++    return !!e && e.phase === 'CPU_READY' && e.wanted && e.ticket.revision === ticket.revision;
++  }
+diff --git a/v2/tests/browser/experience_smoke.py b/v2/tests/browser/experience_smoke.py
+new file mode 100644
+index 0000000..cf6a9e3
+--- /dev/null
++++ b/v2/tests/browser/experience_smoke.py
+@@ -0,0 +1,224 @@
++"""Automatic lab UX, staged colliders, progressive imagery and bounded walking.
++
++Default: intercept all provider requests with deterministic fixtures. Live mode is
++an explicit release opt-in, limits actual Mapbox requests and never logs a token.
++"""
++import asyncio
++import functools
++import hashlib
++import http.server
++import json
++import math
++import os
++from pathlib import Path
++import shutil
++import tempfile
++import threading
++import time
++from urllib.parse import urlsplit, parse_qs, urlencode, urlunsplit
++from playwright.async_api import async_playwright
++from provider_smoke import png, QuietHandler
++
++ROOT = Path(__file__).resolve().parents[2]
++LIVE = os.getenv('ZERANA_LIVE_STREAM') == '1'
++OUTPUT = ROOT / 'browser-results' / ('experience-live' if LIVE else 'experience')
++MAX_LIVE_REQUESTS = 96
++
++
++def query(url, **values):
++    p = urlsplit(url)
++    q = {k: v[-1] for k, v in parse_qs(p.query).items()}
++    q.update(values)
++    return urlunsplit((p.scheme, p.netloc, p.path, urlencode(q), p.fragment))
++
++
++async def walk(page, key, distance, timeout=60000):
++    begin = await page.evaluate('window.__ZERANA_PLAYER_DEBUG__.state.ecefPosition')
++    await page.keyboard.down('ShiftLeft')
++    await page.keyboard.down(key)
++    try:
++        await page.wait_for_function('''args => { const s=window.__ZERANA_PLAYER_DEBUG__;
++          if(s.runtimeError) throw Error(s.runtimeError);
++          const p=s.state.ecefPosition,a=args.start;
++          return Math.hypot(p.xMeters-a.xMeters,p.yMeters-a.yMeters,p.zMeters-a.zMeters)>args.distance;
++        }''', arg={'start': begin, 'distance': distance}, timeout=timeout)
++    finally:
++        await page.keyboard.up(key)
++        await page.keyboard.up('ShiftLeft')
++
++
++async def run(url):
++    OUTPUT.mkdir(parents=True, exist_ok=True)
++    report = {'mode': 'LIVE_MAPBOX_EXPERIENCE' if LIVE else 'MOCKED_AUTOMATIC_EXPERIENCE', 'checks': []}
++    errors, http_errors, unexpected, requests, worker_paths = [], [], [], [], []
++    state = {'block_images': False, 'forbid_provider': False}
++    gate = asyncio.Event()
++    gate.set()
++    async with async_playwright() as p:
++        options = {'headless': True, 'args': ['--no-sandbox', '--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--enable-precise-memory-info']}
++        if os.getenv('CHROMIUM_PATH'):
++            options['executable_path'] = os.environ['CHROMIUM_PATH']
++        browser = await p.chromium.launch(**options)
++        context = await browser.new_context(viewport={'width': 1440, 'height': 1000}, service_workers='block')
++        page = await context.new_page()
++        page.on('pageerror', lambda error: errors.append(str(error)))
++        async def route_request(route):
++            parts = urlsplit(route.request.url)
++            if parts.hostname == 'api.mapbox.com':
++                if state['forbid_provider']:
++                    unexpected.append('provider-in-synthetic-mode')
++                    await route.abort()
++                    return
++                if LIVE:
++                    if len(requests) >= MAX_LIVE_REQUESTS:
++                        unexpected.append('live-request-cap-reached')
++                        await route.abort()
++                        return
