@@ -1,0 +1,31 @@
+name: Stage 8 isolated verification toolchain
+on:
+  push:
+    branches: [work/stage8-source-snapshot]
+    paths: [.github/workflows/stage8-toolchain.yml]
+permissions:
+  contents: read
+jobs:
+  toolchain:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 8f72ad1d40d5605005fd90149faf77a8bbb4c935
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Archive only tracked Git history and locked dependencies
+        run: |
+          git bundle create source.bundle HEAD
+          tar -czf verification-toolchain.tar.gz node_modules source.bundle
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stage8-locked-toolchain
+          path: verification-toolchain.tar.gz
+          retention-days: 1
