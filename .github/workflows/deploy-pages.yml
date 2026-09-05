@@ -60,6 +60,10 @@ jobs:
         run: python v2/tests/browser/streaming_smoke.py
       - name: Validate sliding window and recycling before publication
         run: python v2/tests/browser/sliding_window_smoke.py
+      - name: Validate automatic experience and prepared colliders
+        env:
+          ZERANA_SOAK_SECONDS: '120'
+        run: python v2/tests/browser/experience_smoke.py
       - name: Configure Pages
         uses: actions/configure-pages@v5
       - name: Upload combined Pages artifact
@@ -89,7 +93,7 @@ jobs:
     name: Verify published V1 and V2
     needs: deploy
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -122,6 +126,20 @@ jobs:
           ZERANA_PREVIEW_URL: ${{ needs.deploy.outputs.page_url }}v2/
           ZERANA_EXPECTED_SHA: ${{ github.sha }}
         run: python v2/tests/browser/sliding_window_smoke.py
+      - name: Verify automatic experience on the published domain
+        env:
+          ZERANA_PREVIEW_URL: ${{ needs.deploy.outputs.page_url }}v2/
+          ZERANA_EXPECTED_SHA: ${{ github.sha }}
+          ZERANA_SOAK_SECONDS: '120'
+        run: python v2/tests/browser/experience_smoke.py
+      - name: One bounded real Mapbox streaming verification
+        if: contains(github.event.head_commit.message, '[verify-stream-live]')
+        env:
+          ZERANA_PREVIEW_URL: ${{ needs.deploy.outputs.page_url }}v2/
+          ZERANA_EXPECTED_SHA: ${{ github.sha }}
+          ZERANA_LIVE_STREAM: '1'
+          ZERANA_EXPECTED_TOKEN_SHA256: '9a1c9c843f9a77e5fcb98cb69f6267139fd9c547abf483c60326f4aa9316c0bc'
+        run: python v2/tests/browser/experience_smoke.py
       - name: Retain sanitized public verification
         if: always()
         uses: actions/upload-artifact@v4
@@ -132,5 +150,7 @@ jobs:
             v2/browser-results/player/
             v2/browser-results/streaming/
             v2/browser-results/sliding-window/
+            v2/browser-results/experience/
+            v2/browser-results/experience-live/
           retention-days: 7
           if-no-files-found: warn

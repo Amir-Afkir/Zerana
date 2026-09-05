@@ -69,7 +69,7 @@ jobs:
   terrain-browser:
     name: Combined preview - browser and Pages prefix
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
         with:
@@ -104,6 +104,10 @@ jobs:
         run: python v2/tests/browser/streaming_smoke.py
       - name: Test sliding window, hot recycling and delayed replacement
         run: python v2/tests/browser/sliding_window_smoke.py
+      - name: Test automatic experience, prepared colliders and timed memory probes
+        env:
+          ZERANA_SOAK_SECONDS: '120'
+        run: python v2/tests/browser/experience_smoke.py
       - name: Retain preview and sanitized browser evidence
         if: always()
         uses: actions/upload-artifact@v4
