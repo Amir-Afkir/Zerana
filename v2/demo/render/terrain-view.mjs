@@ -168,6 +168,36 @@ export class TerrainView{
     for(const resource of [material,texture]){this.own(resource);cell.resources.add(resource);}
     cell.surfaceMaterial=material;if(!this.modes?.normals)cell.mesh.material=material;
   }
+  clearRoadDebug(){
+    for(const cell of this.cellViews){
+      const line=cell.roadDebug;if(!line)continue;
+      line.removeFromParent();
+      for(const resource of [line.geometry,line.material]){resource.dispose();cell.resources.delete(resource);this.resources.delete(resource);}
+      cell.roadDebug=null;
+    }
+  }
+  setRoadDebugVisible(visible){for(const cell of this.cellViews)if(cell.roadDebug)cell.roadDebug.visible=visible;}
+  setRoadDebugPackets(packets){
+    if(!Array.isArray(packets)||packets.length>9)throw new Error('ROAD_RENDER_BUDGET');
+    const staged=[];let segments=0;
+    try{
+      for(const p of packets){
+        const cell=this.cellViews.find(c=>`web-mercator/${c.packet.id.level}/${c.packet.id.x}/${c.packet.id.y}`===p.cellKey);
+        if(!cell||!(p.positions instanceof Float32Array)||!(p.colors instanceof Float32Array)||p.colors.length!==p.positions.length||p.positions.length%6||!p.positions.every(Number.isFinite)||!p.colors.every(Number.isFinite))throw new Error('ROAD_RENDER_PACKET');
+        segments+=p.positions.length/6;if(segments>60000)throw new Error('ROAD_RENDER_BUDGET');
+        if(!p.positions.length)continue;
+        const geometry=new THREE.BufferGeometry();geometry.setAttribute('position',new THREE.BufferAttribute(p.positions,3));geometry.setAttribute('color',new THREE.BufferAttribute(p.colors,3));
+        const material=new THREE.LineBasicMaterial({vertexColors:true,depthTest:false,depthWrite:false});
+        const line=new THREE.LineSegments(geometry,material);line.renderOrder=50;line.name='road-cartographic-diagnostic';
+        staged.push({cell,line});
+      }
+    }catch(error){for(const {line} of staged){line.geometry.dispose();line.material.dispose();}throw error;}
+    this.clearRoadDebug();
+    for(const {cell,line} of staged){
+      for(const resource of [line.geometry,line.material]){this.own(resource);cell.resources.add(resource);}
+      cell.roadDebug=line;cell.root.add(line);
+    }
+  }
   setVisibleCells(ids){
     const key=id=>`${id.level}/${id.x}/${id.y}`;
     const keys=new Set(ids.map(key)), resident=new Set(this.cellViews.map(c=>key(c.packet.id)));
@@ -226,7 +256,7 @@ export class TerrainView{
     this.scene.updateMatrixWorld(true);this.camera.updateMatrixWorld(true);
     const marker=this.markerEcef?vector(ecefToThreeLocal(this.markerEcef,this.world)):new THREE.Vector3();
     const projected=marker.clone().project(this.camera);
-    return {geometries:this.renderer.info.memory.geometries,textures:this.renderer.info.memory.textures,
+    return {roadCells:this.cellViews.filter(c=>c.roadDebug).map(c=>({key:`web-mercator/${c.packet.id.level}/${c.packet.id.x}/${c.packet.id.y}`,geometryId:c.roadDebug.geometry.uuid,visible:c.roadDebug.visible&&c.root.visible,segments:c.roadDebug.geometry.attributes.position.count/2})),geometries:this.renderer.info.memory.geometries,textures:this.renderer.info.memory.textures,
       drawCalls:this.renderer.info.render.calls,altitudeAuthority:this.cellViews[0]?.packet.altitudeAuthority,
       texturedCells:this.cellViews.filter(cell=>cell.surfaceMaterial.map && cell.surfaceMaterial!==this.surfaceMaterial).length,markerHeightMeters:MARKER_HEIGHT_METERS,
       markerEcef:this.markerEcef,markerNdc:projected.toArray(),

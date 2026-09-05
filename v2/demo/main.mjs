@@ -16,6 +16,7 @@ import { TerrainSampler } from '../src/generation/terrain/terrain-sampler.ts';
 import { buildTerrainCell } from '../src/generation/terrain/terrain-builder.ts';
 import { measureTerrainSeams } from '../src/debug/seam-metrics.ts';
 import { TerrainView } from './render/terrain-view.mjs';
+import { RoadSession } from './roads/road-session.mjs';
 import { StreamSession } from './streaming/stream-session.mjs';
 import { PlayerSession } from './runtime/player-session.mjs';
 
@@ -25,7 +26,7 @@ const buildSha = String(import.meta.env.VITE_BUILD_SHA || 'local');
 const manualMode = new URLSearchParams(location.search).get('lab') === 'manual';
 const credits = new Set();
 const places = { paris:[2.35,48.86],equator:[0,0],tanger:[-5.81,35.76],tokyo:[139.69,35.68],antimeridian:[179.99999,35],north:[0,85] };
-let view, playerSession, streamSession, packets=[], world, revision=0, rebases=0, sourceId='', cacheSize=0, busy=false, loadController=null, requestRevision=0, providerReport=null;
+let view, playerSession, streamSession, roadSession, packets=[], world, revision=0, rebases=0, sourceId='', cacheSize=0, busy=false, loadController=null, requestRevision=0, providerReport=null;
 function status(message,error=false){$('status').textContent=message;$('status').classList.toggle('error',error);}
 function refreshMetrics(){
   const seams=measureTerrainSeams(packets,world,{allowSourceSnapshots:true}), snapshot=view.snapshot();
@@ -70,7 +71,7 @@ async function build(){
     const markerPosition=geodeticRadians(position.longitudeRad,position.latitudeRad,source.heightAt(position));
     const nextWorld=createGeoAnchor(markerPosition);
     if(controller.signal.aborted||request!==requestRevision)return;
-    streamSession?.stop();
+    roadSession?.reset();streamSession?.stop();
     view.setPatch(next,nextWorld,geodeticToEcef(markerPosition),result?.textures);
     packets=next;world=nextWorld;
     playerSession.install(next,nextWorld,geodeticToEcef(markerPosition),allowPreview);
@@ -121,7 +122,8 @@ try{
   streamSession=new StreamSession(view,playerSession,(next,attributions)=>{
     packets=next;if(attributions?.length)attribution(attributions);refreshMetrics();
   });
-  $('runtime-tools').append(playerSession.panel,streamSession.panel);
+  roadSession=new RoadSession(view,()=>busy?null:streamSession.config,value=>{attribution([value]);$('attribution').hidden=false;},refreshMetrics);
+  $('runtime-tools').append(playerSession.panel,streamSession.panel,roadSession.panel);
   playerSession.autoResume=!manualMode;
   $('auto-explore').addEventListener('change',()=>{playerSession.autoResume=$('auto-explore').checked;});
   modes();
@@ -139,6 +141,6 @@ try{
     const next=createGeoAnchor(ecefToGeodetic(threeLocalToEcef([512,0,0],world)));
     view.rebase(next);world=next;rebases++;playerSession.rebase(next);view.render();refreshMetrics();
   });
-  window.addEventListener('pagehide',()=>{loadController?.abort();streamSession.dispose();playerSession.dispose();view.dispose();},{once:true});
+  window.addEventListener('pagehide',()=>{loadController?.abort();roadSession.dispose();streamSession.dispose();playerSession.dispose();view.dispose();},{once:true});
   void build();
 }catch(error){status(`Initialisation WebGL impossible : ${error.message}`,true);}
