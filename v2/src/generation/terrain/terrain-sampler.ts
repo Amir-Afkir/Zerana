@@ -7,7 +7,7 @@ import { vector } from '../../geo/linear.js';
 import type { Vec3 } from '../../geo/linear.js';
 import { latticeAddress, TERRAIN_LIMITS } from './lattice.js';
 import type { LatticeAddress } from './lattice.js';
-import type { EllipsoidElevationSource } from './synthetic-elevation.js';
+import type { TerrainHeightSource } from './elevation-source.js';
 
 export interface TerrainSample {
   readonly address: LatticeAddress;
@@ -17,14 +17,18 @@ export interface TerrainSample {
 
 /** Cache lifetime = one immutable source. Eviction never changes sample values. */
 export class TerrainSampler {
-  readonly source: EllipsoidElevationSource;
+  readonly source: TerrainHeightSource;
   readonly maxEntries: number;
   private readonly cache = new Map<string, TerrainSample>();
 
-  constructor(source: EllipsoidElevationSource, maxEntries: number = TERRAIN_LIMITS.maxSampleEntries) {
-    if (source.verticalReference !== 'ELLIPSOIDAL_WGS84' || source.provenance !== 'synthetic' ||
-        !source.id || typeof source.heightAt !== 'function') {
-      throw new RangeError('This stage accepts only explicit synthetic ellipsoid heights');
+  constructor(source: TerrainHeightSource, maxEntries: number = TERRAIN_LIMITS.maxSampleEntries,
+    options: { readonly allowUnresolvedDatumPreview?: boolean } = {}) {
+    const canonical = source.verticalReference === 'ELLIPSOIDAL_WGS84' &&
+      ['synthetic', 'observed', 'converted'].includes(source.provenance);
+    const preview = options.allowUnresolvedDatumPreview === true &&
+      source.verticalReference === 'UNRESOLVED_DATUM_PREVIEW' && source.provenance === 'estimated';
+    if ((!canonical && !preview) || !source.id || typeof source.heightAt !== 'function') {
+      throw new RangeError('Explicit height reference required; unresolved datum preview is opt-in only');
     }
     if (!Number.isSafeInteger(maxEntries) || maxEntries < 1 || maxEntries > TERRAIN_LIMITS.maxSampleEntries) {
       throw new RangeError('Sample cache capacity outside supported budget');

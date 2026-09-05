@@ -1,4 +1,6 @@
 import './style.css';
+import './providers.css';
+import { loadMapboxPatch } from './providers/mapbox-raster.mjs';
 import { geodeticDegrees, geodeticRadians } from '../src/geo/geodetic.ts';
 import { geodeticToEcef, ecefToGeodetic } from '../src/geo/ecef.ts';
 import { degrees, meters } from '../src/geo/units.ts';
@@ -13,42 +15,77 @@ import { TerrainView } from './render/terrain-view.mjs';
 
 const $ = id => document.getElementById(id);
 const places = { paris:[2.35,48.86],equator:[0,0],tanger:[-5.81,35.76],tokyo:[139.69,35.68],antimeridian:[179.99999,35],north:[0,85] };
-let view, packets=[], world, revision=0, rebases=0, sourceId='', cacheSize=0, busy=false;
+let view, packets=[], world, revision=0, rebases=0, sourceId='', cacheSize=0, busy=false, loadController=null, requestRevision=0, providerReport=null;
 function status(message,error=false){$('status').textContent=message;$('status').classList.toggle('error',error);}
 function refreshMetrics(){
   const seams=measureTerrainSeams(packets,world), snapshot=view.snapshot();
-  const rows=[['Cellules',packets.length],['Source',sourceId],['Sommets',packets.reduce((n,c)=>n+c.positions.length/3,0)],
+  const rows=[['Cellules',packets.length],['Source',providerReport?'Mapbox / aperçu':sourceId],['Altitude',providerReport?'Datum non résolu — aperçu uniquement':'Ellipsoïdale synthétique'],['Zoom DEM / image',providerReport?`${providerReport.elevationZoom} / ${providerReport.imageryZoom}`:'—'],['Sommets',packets.reduce((n,c)=>n+c.positions.length/3,0)],
     ['Bords comparés',seams.edgePairs],['Écart CPU / m',(seams.maxGapMeters).toExponential(2)],
     ['Estimation Float32 / m',seams.estimatedFloat32GapMeters.toExponential(2)],['Clés différentes',seams.mismatchedKeys],
     ['Samples en cache',cacheSize],['Géométries GPU',snapshot.geometries],['Origines déplacées',rebases]];
   $('metrics').replaceChildren(...rows.flatMap(([name,value])=>{
     const dt=document.createElement('dt'),dd=document.createElement('dd');dt.textContent=name;dd.textContent=String(value);return [dt,dd];
   }));
-  window.__ZERANA_TERRAIN_DEBUG__={revision,rebases,cellCount:packets.length,sourceId,seams,...snapshot};
+  window.__ZERANA_TERRAIN_DEBUG__={revision,rebases,cellCount:packets.length,sourceId,seams,providerReport,...snapshot};
 }
 function modes(){view.setModes({wireframe:$('wireframe').checked,normals:$('normals').checked,metricGrid:$('metric-grid').checked});}
+
+function attribution(values){
+  const container=$('provider-attribution');container.replaceChildren();
+  for(const value of values){
+    const parsed=new DOMParser().parseFromString(value,'text/html');
+    // Provider HTML is untrusted: copy text and safe HTTPS links only, no attributes or scripts.
+    for(const node of parsed.body.childNodes){
+      if(node.nodeType===Node.TEXT_NODE){container.append(document.createTextNode(node.textContent));continue;}
+      if(node.nodeName==='A'){
+        try{const url=new URL(node.getAttribute('href'));if(url.protocol!=='https:')continue;
+          const a=document.createElement('a');a.href=url.href;a.textContent=node.textContent;a.rel='noopener noreferrer';a.target='_blank';container.append(a,document.createTextNode(' '));
+        }catch{/* invalid link omitted */}
+      }
+    }
+  }
+}
 async function build(){
-  if(busy)return;
-  busy=true;$('build').disabled=true;status('Construction de la scène synthétique…');
+  loadController?.abort();
+  const request=++requestRevision,controller=new AbortController();loadController=controller;
+  const isMapbox=$('source-mode').value==='mapbox';
+  busy=true;$('build').disabled=true;$('cancel-load').hidden=!isMapbox;
+  status(isMapbox?'Chargement borné du relief et du satellite…':'Construction de la scène synthétique…');
   await new Promise(requestAnimationFrame);
   try{
     const position=geodeticDegrees(degrees(Number($('longitude').value)),degrees(Number($('latitude').value)),meters(0));
-    const source=syntheticElevation($('profile').value),sampler=new TerrainSampler(source);
-    const ids=terrainPatchCells(position,Number($('level').value),Number($('side').value));
-    // Bounded static diagnostic generation. No streaming performance claim here.
-    const next=ids.map(id=>buildTerrainCell(id,sampler,Number($('subdivisions').value)));
+    const subdivisions=Number($('subdivisions').value),ids=terrainPatchCells(position,Number($('level').value),Number($('side').value));
+    const result=isMapbox?await loadMapboxPatch({cells:ids,subdivisions,token:$('mapbox-token').value,
+      allowPreview:$('allow-preview').checked,signal:controller.signal,
+      onProgress:(n,total)=>{if(request===requestRevision)status(`Tuiles reçues : ${n}/${total}`);}}):null;
+    if(controller.signal.aborted||request!==requestRevision)return;
+    const source=result?.source||syntheticElevation($('profile').value);
+    const sampler=new TerrainSampler(source,undefined,{allowUnresolvedDatumPreview:isMapbox});
+    // Bounded static diagnostic generation, not an interactive streaming implementation.
+    const next=ids.map(id=>buildTerrainCell(id,sampler,subdivisions));
     const markerPosition=geodeticRadians(position.longitudeRad,position.latitudeRad,source.heightAt(position));
     const nextWorld=createGeoAnchor(markerPosition);
-    view.setPatch(next,nextWorld,geodeticToEcef(markerPosition));
+    if(controller.signal.aborted||request!==requestRevision)return;
+    view.setPatch(next,nextWorld,geodeticToEcef(markerPosition),result?.textures);
     packets=next;world=nextWorld;sourceId=source.id;cacheSize=sampler.size;sampler.clear();
+    providerReport=result?{snapshotId:result.snapshotId,elevationZoom:result.elevationZoom,imageryZoom:result.imageryZoom,
+      requestCount:result.requestCount,waterFallbackCount:result.waterFallbackCount,evidence:result.evidence,
+      verticalReference:source.verticalReference,accuracy:'not-certified'}:null;
+    $('source-badge').textContent=isMapbox?'MAPBOX · DATUM NON RÉSOLU · APERÇU APPROXIMATIF':'SYNTHÉTIQUE · 1 UNITÉ = 1 MÈTRE';
+    $('source-badge').classList.toggle('preview-warning',isMapbox);
+    $('attribution').hidden=!isMapbox;$('uv-legend').hidden=isMapbox;
+    if(result)attribution(result.attributions);
     revision++;rebases=0;modes();view.overview();view.render();refreshMetrics();
     document.body.dataset.ready=String(revision);
-    status('Scène prête. Relief synthétique, aucun fournisseur externe.');
-  }catch(error){status(error.message,true);}
-  finally{busy=false;$('build').disabled=false;}
+    status(isMapbox?'Satellite et relief reçus. Altitudes source non certifiées WGS84.':'Scène prête. Relief synthétique, aucun fournisseur externe.');
+  }catch(error){if(request===requestRevision)status(error.name==='AbortError'?'Chargement annulé ; scène précédente conservée.':error.message,true);}
+  finally{if(request===requestRevision){busy=false;$('build').disabled=false;$('cancel-load').hidden=true;}}
 }
+
 try{
   view=new TerrainView($('viewport'),error=>status(error,true));
+  $('source-mode').addEventListener('change',()=>{$('provider-options').hidden=$('source-mode').value!=='mapbox';loadController?.abort();});
+  $('cancel-load').addEventListener('click',()=>loadController?.abort());
   $('controls').addEventListener('submit',event=>{event.preventDefault();void build();});
   $('place').addEventListener('change',()=>{
     const [lon,lat]=places[$('place').value];$('longitude').value=lon;$('latitude').value=lat;
@@ -61,6 +98,6 @@ try{
     const next=createGeoAnchor(ecefToGeodetic(threeLocalToEcef([512,0,0],world)));
     view.rebase(next);world=next;rebases++;view.render();refreshMetrics();
   });
-  window.addEventListener('pagehide',()=>view.dispose(),{once:true});
+  window.addEventListener('pagehide',()=>{loadController?.abort();view.dispose();},{once:true});
   void build();
 }catch(error){status(`Initialisation WebGL impossible : ${error.message}`,true);}

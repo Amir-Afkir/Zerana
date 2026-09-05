@@ -1,4 +1,4 @@
-name: Zerana V2 - Geo Kernel and Terrain CI
+name: Zerana V2 - Geo Terrain and Raster CI
 
 on:
   pull_request:
@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   geo-kernel:
-    name: Geo and terrain - Node ${{ matrix.node }}
+    name: Geo terrain raster - Node ${{ matrix.node }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     strategy:
@@ -68,7 +68,7 @@ jobs:
           JS
 
   terrain-browser:
-    name: Synthetic terrain - browser and Pages prefix
+    name: Terrain and raster - browser and Pages prefix
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -87,13 +87,15 @@ jobs:
         run: |
           python -m pip install -r v2/tests/browser/requirements.txt
           python -m playwright install --with-deps chromium
-      - name: Test built demo on a real HTTP subpath
+      - name: Test built synthetic demo on a real HTTP subpath
         run: npm --prefix v2 run demo:test
+      - name: Test provider integration with deterministic HTTP fixtures
+        run: python v2/tests/browser/provider_smoke.py
       - name: Retain browser evidence and standalone demo
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: v2-terrain-demo-and-evidence
+          name: v2-raster-demo-and-evidence
           path: |
             v2/demo-dist/
             v2/browser-results/

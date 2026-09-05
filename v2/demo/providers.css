@@ -1,0 +1,9 @@
+[hidden] { display: none !important; }
+#provider-options { margin: 12px 0; padding: 12px; border: 1px solid #976d34; border-radius: 8px; }
+.consent { display: flex; align-items: flex-start; gap: 8px; line-height: 1.4; margin-top: 10px; }
+.consent input { width: auto; margin-top: 4px; }
+#cancel-load { margin-top: 8px; }
+#attribution { position: absolute; right: 10px; bottom: 8px; max-width: 85%; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; background: #fff; color: #14202c; padding: 4px 8px; font: 11px/1.4 sans-serif; z-index: 3; }
+#attribution a { color: #14202c; }
+#source-badge.preview-warning { color: #ffe0a3; border-color: #a47634; max-width: 80%; }
+#attribution .mapbox-logo { display: inline-flex; background: #253440; border-radius: 3px; }
