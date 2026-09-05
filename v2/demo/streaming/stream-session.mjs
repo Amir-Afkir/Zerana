@@ -127,7 +127,7 @@ export class StreamSession {
     for(const key of remove){
       if(this.imageFlight?.key===key)this.imageFlight.controller.abort();
       this.imageFailures?.delete(key);
-      const value=this.loaded.get(key);this.view.removeCell(value.packet.id);this.loaded.delete(key);this.seen.delete(key);
+      const value=this.loaded.get(key);this.view.removeCell(value.packet.id);this.loaded.delete(key);
       this.cache.set(key,value,packetBytes(value));this.recycling?.delete(key);this.seen?.delete(key);this.shown?.delete(key);this.evicted++;}
     this.metricsDirty=true;
   }
