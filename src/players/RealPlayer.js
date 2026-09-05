@@ -3,8 +3,10 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader';
 import { CHUNK_SIZE } from '../utils/constants.js';
 
+const DEFAULT_MODEL_URL = `${import.meta.env.BASE_URL}models/DefaultAvatarPC.glb`;
+
 export default class RealPlayer {
-  constructor(scene, onLoaded, modelUrl = '/models/DefaultAvatarPC.glb', globeManager = null) {
+  constructor(scene, onLoaded, modelUrl = DEFAULT_MODEL_URL, globeManager = null) {
     this.loader = new GLTFLoader();
     this.model = null;
     this.modelUrl = modelUrl;
