@@ -39,6 +39,7 @@ export class TerrainPhysics implements PhysicsWorld {
   private count = 0;
   private activeKeys: ReadonlySet<string> | null = null;
   private built = 0;
+  private adopted = 0;
   private frame: GeoAnchor;
   private maxCells: number;
   private readonly allowPreview: boolean;
@@ -66,7 +67,7 @@ export class TerrainPhysics implements PhysicsWorld {
   /** Publish an incremental set atomically; unchanged packets retain their BVHs.
    * New-cell construction remains bounded to one N<=32 cell per browser frame.
    * The caller pins support cells before eviction. */
-  syncPackets(packets: readonly TerrainCellPacket[]): void {
+  syncPackets(packets: readonly TerrainCellPacket[], prepared: ReadonlyMap<TerrainCellPacket, TriangleIndex> = new Map()): void {
     if(!packets.length||packets.length>this.maxCells) throw new RangeError('Terrain collider capacity exceeded');
     const key=(p:TerrainCellPacket): string => `${p.id.level}/${p.id.x}/${p.id.y}`;
     if(new Set(packets.map(key)).size!==packets.length) throw new Error('Duplicate collider cell');
@@ -81,11 +82,15 @@ export class TerrainPhysics implements PhysicsWorld {
         (p.altitudeAuthority==='ellipsoidal'&&p.verticalReference!=='ELLIPSOIDAL_WGS84')) throw new Error('INVALID_COLLIDER_AUTHORITY');
       const previous=old.get(key(p));if(previous?.packet===p)return previous;
       const cell=createGeoAnchor(p.anchor.geodetic);
-      return {packet:p,anchor:cell,index:new TriangleIndex(p.positions,p.indices),
+      const index = prepared.get(p) ?? new TriangleIndex(p.positions,p.indices);
+      if (!(index instanceof TriangleIndex) || index.triangleCount !== p.indices.length/3) throw new Error('INVALID_PREPARED_COLLIDER');
+      return {packet:p,anchor:cell,index,
         toCell:frameTransform(this.frame,cell),fromCell:frameTransform(cell,this.frame)};
     });
     // Count only successfully published builds; existing identities are reused.
-    this.built += next.filter(c => old.get(key(c.packet)) !== c).length;
+    const added = next.filter(c => old.get(key(c.packet)) !== c);
+    this.built += added.length;
+    this.adopted += added.filter(c => prepared.has(c.packet)).length;
     this.colliders=next;this.count=count;
   }
   /** Visibility and collision activation change together, without rebuilding a BVH. */
@@ -102,6 +107,8 @@ export class TerrainPhysics implements PhysicsWorld {
   }
   get activeColliderCount(): number { return this.colliders.filter(c => this.enabled(c)).length; }
   get bvhBuildCount(): number { return this.built; }
+  get mainThreadBvhBuildCount(): number { return this.built - this.adopted; }
+  get preparedBvhAdoptions(): number { return this.adopted; }
   setCapacity(capacity: number): void {
     if(!Number.isInteger(capacity)||capacity<this.colliders.length||capacity<1||capacity>64) throw new RangeError('Invalid collider capacity');
     this.maxCells=capacity;

@@ -89,7 +89,7 @@ async def run(base_url):
             data = png((1, 150, 136)) if is_dem else png((46, 123, 89))
             await route.fulfill(headers=headers, content_type='image/png', body=data)
         await page.route('https://api.mapbox.com/**', route_provider)
-        await page.goto(base_url, wait_until='networkidle')
+        await page.goto(base_url + ('&' if '?' in base_url else '?') + 'lab=manual', wait_until='networkidle')
         await page.wait_for_function('document.body.dataset.ready === "1"')
         assert not state['requests'], 'Synthetic default must not request provider data'
         report['scenarios'].append('synthetic-default-no-provider-requests')

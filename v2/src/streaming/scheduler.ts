@@ -81,6 +81,10 @@ export class CellScheduler<T> {
     const e = this.ordered().find(item => item.wanted && item.phase === 'CPU_READY');
     return e && e.value !== undefined ? {ticket:e.ticket, value:e.value, bytes:e.bytes} : null;
   }
+  isReady(ticket: CellTicket): boolean {
+    const e = this.entries.get(ticket.key);
+    return !!e && e.phase === 'CPU_READY' && e.wanted && e.ticket.revision === ticket.revision;
+  }
   installed(ticket: CellTicket): void {
     const e = this.entries.get(ticket.key);
     if (!e || e.phase !== 'CPU_READY' || e.ticket.revision !== ticket.revision) throw new Error('STALE_STREAM_INSTALL');

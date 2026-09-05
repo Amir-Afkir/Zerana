@@ -1,0 +1,30 @@
+/* Compact default experience. All mathematical diagnostics remain in details. */
+.layout { grid-template-columns: 300px minmax(0,1fr); }
+.panel { padding: 26px 20px; }
+h1 { font-size: 28px; line-height: 1.15; }
+.intro { margin-bottom: 22px; font-size: 13px; }
+label, input, select, button { font-size: 13px; }
+#build { padding: 12px; margin-bottom: 8px; }
+details { margin: 12px 0; border-top: 1px solid #2b3847; padding-top: 12px; }
+summary { font-size: 12px; color: #adc4d6; cursor: pointer; padding: 6px 0; }
+details[open] > summary { margin-bottom: 14px; color: #76ddb4; }
+input[type=password] { width: 100%; padding: 9px; margin-top: 7px; border: 1px solid #354559; border-radius: 6px; background: #0d141d; }
+.play-guide { font-size: 12px; color: #a6b9c9; line-height: 1.9; padding: 14px 0; border-bottom: 1px solid #2b3847; }
+.play-guide strong { color: #dce5ed; font-weight: 600; }
+.preview-notice { font-size: 11px; line-height: 1.65; }
+.preview-nav { margin-top: 24px; font-size: 10px; }
+#status { min-height: 0; margin: 14px 0 0; font-size: 12px; }
+#runtime-tools section { padding: 12px 0; }
+#runtime-tools h2 { font-size: 15px; }
+#attribution { max-width: calc(100% - 20px); gap: 8px; padding: 4px 7px; font-size: 11px; line-height: 1.6; border-radius: 4px; }
+#attribution a { white-space: nowrap; }
+#attribution .mapbox-logo { flex-shrink: 0; }
+#provider-attribution { flex: 1; }
+#uv-legend { bottom: 42px; }
+:focus-visible { outline: 2px solid #76ddb4; outline-offset: 3px; }
+@media(max-width:760px) {
+  .layout { grid-template-columns: 1fr; grid-template-rows: 65dvh auto; height: auto; }
+  #viewport { min-height: 65dvh; }
+  .panel { padding: 20px; }
+  #attribution { right: 6px; bottom: 6px; max-width: calc(100% - 12px); font-size: 10px; }
+}

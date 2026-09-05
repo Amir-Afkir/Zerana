@@ -99,18 +99,19 @@ async function sha256(bytes) {
   return [...hash].map(value => value.toString(16).padStart(2, '0')).join('');
 }
 /** Session-scoped, bounded parallel loading. No persistence, token storage or background prefetch. */
-export async function loadMapboxPatch({ cells, subdivisions, token, allowPreview, signal, onProgress = () => {}, byteCache = null, onHttpAttempt = () => {} }) {
+export async function loadMapboxPatch({ cells, subdivisions, token, allowPreview, signal, onProgress = () => {}, byteCache = null, onHttpAttempt = () => {}, layers = 'all' }) {
+  if (!['all','terrain','imagery'].includes(layers)) throw new Error('INVALID_RASTER_LAYERS');
   if (allowPreview !== true) throw new Error('VERTICAL_DATUM_UNRESOLVED — active explicitement l’aperçu approximatif.');
   aborted(signal);
   if (!cells.length || cells.some(cell => cell.level !== cells[0].level)) throw new Error('One patch level required');
   token = token.trim();
   const elevationZoom = Math.min(cells[0].level, 15), imageryZoom = Math.min(cells[0].level, 18);
-  const dem = planRasterTiles(cells, elevationZoom, 256, subdivisions, 1);
-  const imagery = planRasterTiles(cells, imageryZoom, 256, 256, 1);
+  const dem = layers === 'imagery' ? [] : planRasterTiles(cells, elevationZoom, 256, subdivisions, 1);
+  const imagery = layers === 'terrain' ? [] : planRasterTiles(cells, imageryZoom, 256, 256, 1);
   const tasks = [...dem.map(id => ({ layer: 'elevation', id })), ...imagery.map(id => ({ layer: 'imagery', id }))];
   if (tasks.length > RASTER_LIMITS.maxTiles) throw new Error('Budget de requêtes dépassé');
   // Validate public token before starting any request.
-  mapboxTileUrl('elevation', dem[0], token);
+  mapboxTileUrl(dem.length ? 'elevation' : 'imagery', dem[0] || imagery[0], token);
   const session = new AbortController(), stop = () => session.abort();
   signal.addEventListener('abort', stop, { once: true }); aborted(signal);
   const heights = [], colours = [], evidence = [], attributions = []; let cursor = 0, completed = 0, failure, httpAttempts = 0;
@@ -126,7 +127,7 @@ export async function loadMapboxPatch({ cells, subdivisions, token, allowPreview
   };
   try {
     // Attribution is part of each provider response contract. It is never inserted as raw HTML.
-    for (const layer of ['elevation', 'imagery']) {
+    for (const layer of [...(dem.length ? ['elevation'] : []), ...(imagery.length ? ['imagery'] : [])]) {
       const config = MAPBOX_RASTER[layer];
       const metadata = await cachedRequest(`https://api.mapbox.com/v4/${config.tileset}.json?access_token=${encodeURIComponent(token)}`, session.signal, false, onAttempt);
       let json; try { json = JSON.parse(new TextDecoder().decode(metadata.bytes)); } catch { throw new Error('Invalid provider metadata'); }
@@ -149,12 +150,14 @@ export async function loadMapboxPatch({ cells, subdivisions, token, allowPreview
     if (failure) throw failure; aborted(signal);
     evidence.sort((a,b) => a.layer.localeCompare(b.layer) || a.tile.localeCompare(b.tile));
     const snapshotId = await sha256(new TextEncoder().encode(JSON.stringify(evidence)));
-    const heightMosaic = new RasterMosaic(heights), colourMosaic = new RasterMosaic(colours);
-    const source = rasterElevationSource(heightMosaic, { sourceId: 'mapbox.terrain-rgb', snapshotId,
-      verticalDatum: MAPBOX_ELEVATION_DATUM }, { allowUnresolvedDatumPreview: true });
+    const source = heights.length ? rasterElevationSource(new RasterMosaic(heights), { sourceId: 'mapbox.terrain-rgb', snapshotId,
+      verticalDatum: MAPBOX_ELEVATION_DATUM }, { allowUnresolvedDatumPreview: true }) : null;
     const textures = new Map();
-    for (const cell of cells) { aborted(signal); const texture = buildCellImagery(cell, colourMosaic); textures.set(texture.cellKey, texture); }
+    if (colours.length) {
+      const colourMosaic = new RasterMosaic(colours);
+      for (const cell of cells) { aborted(signal); const texture = buildCellImagery(cell, colourMosaic); textures.set(texture.cellKey, texture); }
+    }
     return { source, textures, evidence, snapshotId, attributions, elevationZoom, imageryZoom,
-      requestCount: httpAttempts, plannedRequestCount: tasks.length + 2, waterFallbackCount: evidence.filter(item => item.waterFallback).length };
+      requestCount: httpAttempts, plannedRequestCount: tasks.length + Number(dem.length > 0) + Number(imagery.length > 0), waterFallbackCount: evidence.filter(item => item.waterFallback).length };
   } finally { signal.removeEventListener('abort', stop); session.abort(); }
 }

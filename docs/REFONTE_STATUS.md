@@ -119,6 +119,28 @@ Le 3×3 n'est pas un rayon constant en mètres. Cette tranche ne garantit pas de
 chargements invisibles, n'introduit pas de LOD et ne sépare pas encore le terrain
 Mapbox de son imagerie. Voir `REFONTE_STAGE7.md` et ADR-007.
 
+### Étape 8 — admission étagée et interface directe
+
+Le parcours par défaut charge Mapbox avec le token configuré, puis active le
+streaming 3×3 et le joueur. Les outils et diagnostics sont repliés ; le mode
+`?lab=manual` garde le parcours statique historique. Les crédits fournisseur
+sont dédoublonnés sans suppression du logo ou des mentions nécessaires.
+
+Les nouveaux BVH sont construits dans les workers et validés par lots avant
+adoption. Préparation du mesh, shaders, upload et commit sont étagés ; les
+wireframes sont construits seulement sur demande. Le terrain est admis avant
+l'imagerie, qui partage le même pool, quota et budget mémoire.
+
+Les 271 tests historiques sont conservés ; 19 nouveaux tests CPU vérifient
+l'équivalence/corruption des colliders préparés, l'ownership, les budgets et les
+tickets périmés. Nouveau test navigateur de démarrage automatique et aller-retour
+synthétique chronométré, ainsi qu'un contrôle live Mapbox opt-in de 96 appels max.
+La présence de ces tests ne vaut pas confirmation de réussite ; consulter la PR.
+
+Le patch de départ conserve sa construction statique. Les commandes GPU restent
+non préemptibles. Les preuves longues, le LOD et les couches vectorielles ne sont
+pas considérés terminés par cette tranche. Voir `REFONTE_STAGE8.md` et ADR-008.
+
 ## Ce qui reste à développer ou valider
 
 - Finir le Milestone 5 : réduire les pics d'intégration, confirmer les sessions

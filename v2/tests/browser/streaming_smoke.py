@@ -52,7 +52,7 @@ async def run(url):
         await context.route('**/*',intercept)
         page.on('response',lambda response:http_failures.append(response.status) if response.status>=400 and urlsplit(response.url).hostname!='api.mapbox.com' else None)
         try:
-            await page.goto(url,wait_until='networkidle')
+            await page.goto(url + ('&' if '?' in url else '?') + 'lab=manual',wait_until='networkidle')
             await page.wait_for_function('document.body.dataset.ready === "1"')
             expected=os.getenv('ZERANA_EXPECTED_SHA')
             if expected:assert await page.evaluate('window.__ZERANA_TERRAIN_DEBUG__.buildSha')==expected

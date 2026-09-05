@@ -71,7 +71,7 @@ async def run(url):
             await page.wait_for_function('Object.entries(window.__ZERANA_STREAM_DEBUG__.scheduler.states).every(([k,v]) => ![\"QUEUED\",\"GENERATING\",\"CPU_READY\"].includes(k) || v === 0)', timeout=60000)
             await page.wait_for_timeout(300)
         try:
-            await page.goto(url, wait_until='networkidle')
+            await page.goto(url + ('&' if '?' in url else '?') + 'lab=manual', wait_until='networkidle')
             await page.wait_for_function('document.body.dataset.ready === "1"')
             expected = os.getenv('ZERANA_EXPECTED_SHA')
             if expected:

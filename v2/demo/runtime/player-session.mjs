@@ -44,7 +44,12 @@ export class PlayerSession {
     this.listen(this.$('player-respawn'), 'click', () => this.respawn());
     this.listen(window, 'keydown', event => {
       if (event.code === 'Escape') { this.pause(); return; }
-      if (!this.active || /^(INPUT|SELECT|TEXTAREA)$/.test(event.target?.tagName) || event.target?.isContentEditable) return;
+      if (/^(INPUT|SELECT|TEXTAREA)$/.test(event.target?.tagName) || event.target?.isContentEditable) return;
+      const movement=['KeyW','KeyZ','KeyA','KeyQ','KeyS','KeyD','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'];
+      if(!this.active&&this.autoResume&&!event.repeat&&movement.includes(event.code)&&!this.runtimeError)this.start();
+      if(!this.active)return;
+      if(event.code==='Space'&&/^(BUTTON|SUMMARY)$/.test(event.target?.tagName))return;
+      if(this.autoResume&&movement.includes(event.code))this.view.renderer.domElement.focus({preventScroll:true});
       if (['KeyW', 'KeyZ', 'KeyA', 'KeyQ', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'ShiftLeft', 'ShiftRight', 'Space'].includes(event.code)) {
         this.keys.add(event.code); event.preventDefault();
       }
@@ -56,6 +61,7 @@ export class PlayerSession {
     const canvas = this.view.renderer.domElement;
     canvas.tabIndex = 0;
     this.listen(canvas, 'pointerdown', event => {
+      if(!this.active&&this.autoResume&&!this.runtimeError&&event.button===0)this.start();
       if (!this.active || event.button !== 0) return;
       this.drag = { id: event.pointerId, x: event.clientX, y: event.clientY };
       canvas.setPointerCapture(event.pointerId); event.preventDefault();
@@ -91,7 +97,7 @@ export class PlayerSession {
     }
     this.buttons(); this.report();
   }
-  start() {
+  start({focus=true}={}) {
     if (!this.player || this.loading || this.disposed) return;
     this.keys.clear(); this.clock.reset(); this.player.freezeInterpolation();
     this.view.controls.enableDamping = false;
@@ -100,7 +106,7 @@ export class PlayerSession {
     this.active = true; this.root.visible = true;
     if (this.view.markerRoot) this.view.markerRoot.children[0].visible = false;
     this.view.camera.near = .1; this.view.camera.far = 5000; this.view.camera.updateProjectionMatrix();
-    this.view.renderer.domElement.focus({ preventScroll: true });
+    if(focus)this.view.renderer.domElement.focus({ preventScroll: true });
     this.buttons(); this.draw(1); this.report();
   }
   pause() {
@@ -168,6 +174,7 @@ export class PlayerSession {
     window.__ZERANA_PLAYER_DEBUG__ = { available: true, active: this.active, runtimeError: this.runtimeError,
       state, steps: this.clock.steps, droppedSeconds: this.clock.droppedSeconds, rebases: this.rebases,
       heightMeters: PLAYER.heightMeters, radiusMeters: PLAYER.radiusMeters, scale: transformScale.toArray(),
+      mainThreadBvhBuildCount:this.physics.mainThreadBvhBuildCount,preparedBvhAdoptions:this.physics.preparedBvhAdoptions,
       colliderCount: this.physics.colliderCount, activeColliderCount: this.physics.activeColliderCount, bvhBuildCount: this.physics.bvhBuildCount, triangleCount: this.physics.triangleCount,
       altitudeAuthority: this.physics.altitudeAuthority, footNdc: ndc,
       cameraEcef: threeLocalToEcef(this.view.camera.position.toArray(), this.player.frame), geometryId: this.geometry.uuid };

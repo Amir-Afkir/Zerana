@@ -44,7 +44,7 @@ with TemporaryDirectory() as folder:
                     external_requests.append(route.request.url)
                     route.abort()
             page.route('**/*', allow_local)
-            page.goto(origin + '/Zerana/v2/', wait_until='networkidle')
+            page.goto(origin + '/Zerana/v2/?lab=manual', wait_until='networkidle')
             page.wait_for_function('Number(document.body.dataset.ready) >= 1', timeout=30000)
             def snapshot():
                 return page.evaluate('window.__ZERANA_TERRAIN_DEBUG__')
