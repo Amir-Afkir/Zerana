@@ -64,11 +64,11 @@ async def run(base):
                 if is_road:roads.append(parts.path)
                 try:
                     if is_road and state['blocked']:await asyncio.wait_for(gate.wait(),20)
-                    if is_road and state['auth']:await route.fulfill(status=401,body='{}',content_type='application/json')
+                    if is_road and state['auth']:await route.fulfill(headers={'access-control-allow-origin':'*'},status=401,body='{}',content_type='application/json')
                     elif parts.path.endswith('.json'):
-                        await route.fulfill(content_type='application/json',body=json.dumps({'scheme':'xyz','maxzoom':16,'modified':123,'attribution':'© <a href="https://www.mapbox.com/about/maps">Mapbox</a> © <a href="https://www.openstreetmap.org/copyright/">OpenStreetMap</a>','vector_layers':[{'id':'road'}]}))
-                    elif is_road:await route.fulfill(content_type='application/x-protobuf',body=mvt())
-                    else:await route.fulfill(content_type='image/png',body=png((1,150,136) if 'terrain-rgb/' in parts.path else (40,90,75)))
+                        await route.fulfill(headers={'access-control-allow-origin':'*'},content_type='application/json',body=json.dumps({'scheme':'xyz','maxzoom':16,'modified':123,'attribution':'© <a href="https://www.mapbox.com/about/maps">Mapbox</a> © <a href="https://www.openstreetmap.org/copyright/">OpenStreetMap</a>','vector_layers':[{'id':'road'}]}))
+                    elif is_road:await route.fulfill(headers={'access-control-allow-origin':'*'},content_type='application/x-protobuf',body=mvt())
+                    else:await route.fulfill(headers={'access-control-allow-origin':'*'},content_type='image/png',body=png((1,150,136) if 'terrain-rgb/' in parts.path else (40,90,75)))
                 except Exception:pass
                 return
             if parts.netloc!=urlsplit(base).netloc:unexpected.append(parts.hostname);await route.abort();return
@@ -79,7 +79,8 @@ async def run(base):
         async def build():
             await page.click('#build');await page.wait_for_function('!document.getElementById("build").disabled',timeout=60000)
         async def load():
-            await page.click('#road-load');await page.wait_for_function('window.__ZERANA_ROADS_DEBUG__.state === "ready"',timeout=60000)
+            await page.click('#road-load');await page.wait_for_function('window.__ZERANA_ROADS_DEBUG__.state !== "loading"',timeout=60000)
+            assert await page.evaluate('window.__ZERANA_ROADS_DEBUG__.state')=='ready',await page.evaluate('window.__ZERANA_ROADS_DEBUG__')
             await page.click('#overview')
         try:
             await page.goto(base+'?lab=manual',wait_until='networkidle')

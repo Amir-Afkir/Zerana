@@ -75,3 +75,14 @@ test('token is validated and source cache reset across credentials',async()=>{
  await source.load(cells,'pk.first',new AbortController().signal,32);
  const result=await source.load(cells,'pk.second',new AbortController().signal,32);assert.equal(result.attempts,10);
 });
+
+test('default fetch transport preserves the global Web API receiver',async()=>{
+ const original=globalThis.fetch;let calls=0;
+ globalThis.fetch=function(url){assert.strictEqual(this,globalThis);calls++;return Promise.resolve(url.includes('.json?')?new Response(JSON.stringify(json)):new Response(encode()));};
+ try{const result=await new RoadSource().load(cells,'pk.fixture',new AbortController().signal,32);assert.equal(result.attempts,10);assert.equal(calls,10);}
+ finally{globalThis.fetch=original;}
+});
+test('network transport failures are sanitized and charged, not mislabeled as decoding',async()=>{
+ const source=new RoadSource(async()=>{throw new TypeError('sensitive URL is never surfaced');});
+ await assert.rejects(source.load(cells,'pk.fixture',new AbortController().signal,32),e=>e.message==='ROAD_NETWORK_OR_CORS'&&e.attempts===1);
+});

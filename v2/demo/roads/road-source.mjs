@@ -36,7 +36,8 @@ export function parseRoadMetadata(json){
 /** Fixed allowlisted endpoint. No arbitrary TileJSON URL/template is executed.
  * No persistence; one bounded worker-local decoded LRU, tied to this token. */
 export class RoadSource {
-  constructor(fetcher=fetch){this.fetcher=fetcher;this.cache=new WeightedLru(16*1048576,16);this.token=null;this.metadata=null;}
+  // Native WorkerGlobalScope.fetch requires its global receiver, unlike Node mocks.
+  constructor(fetcher=(url,init)=>globalThis.fetch(url,init)){this.fetcher=fetcher;this.cache=new WeightedLru(16*1048576,16);this.token=null;this.metadata=null;}
   async load(cells,token,signal,grant){
     if(!isPublicMapboxToken(token)||!Number.isInteger(grant)||grant<0||grant>ROAD_HTTP_LIMIT)throw new Error('ROAD_REQUEST_CONTRACT');
     if(this.token!==token){this.cache.clear();this.metadata=null;this.token=token;}
@@ -53,7 +54,7 @@ export class RoadSource {
         try{while(true){aborted(controller.signal);const {value,done}=await reader.read();if(done)break;size+=value.length;if(size>MAX_MVT_BYTES)throw new Error('ROAD_RESPONSE_BUDGET');parts.push(value);}}
         catch(error){await reader.cancel().catch(()=>{});throw error;}finally{reader.releaseLock();}
         const bytes=new Uint8Array(size);let offset=0;for(const part of parts){bytes.set(part,offset);offset+=part.length;}return bytes;
-      }catch(error){if(signal.aborted)throw new DOMException('Cancelled','AbortError');if(timedOut)throw new Error('ROAD_TIMEOUT');throw error;}
+      }catch(error){if(signal.aborted)throw new DOMException('Cancelled','AbortError');if(timedOut)throw new Error('ROAD_TIMEOUT');if(error instanceof TypeError)throw new Error('ROAD_NETWORK_OR_CORS');throw error;}
       finally{clearTimeout(timer);signal.removeEventListener('abort',abort);}
     };
     try{
