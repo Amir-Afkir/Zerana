@@ -12,6 +12,8 @@ import PlayerController from '../players/PlayerController.js';
 import RealPlayer from '../players/RealPlayer.js';
 import { getQualitySettings } from './Quality.js';
 
+const DEFAULT_MODEL_URL = `${import.meta.env.BASE_URL}models/DefaultAvatarPC.glb`;
+
 export default class WorldEngine {
   constructor({
     container,
@@ -19,7 +21,7 @@ export default class WorldEngine {
     zoom = ZOOM_LEVEL,
     chunkSize = CHUNK_SIZE,
     gridSize = GRID_SIZE,
-    modelUrl = '/models/DefaultAvatarPC.glb'
+    modelUrl = DEFAULT_MODEL_URL
   } = {}) {
     this.container = container;
     this.apiKey = apiKey;
@@ -122,7 +124,6 @@ export default class WorldEngine {
   setupPlayer() {
     this.realPlayer = new RealPlayer(this.scene, (player) => {
       this.realPlayerLoaded = true;
-      // Scale will be applied once a valid latitude is known.
       player.setPosition(0, 5, 0);
       this.cameraController.snapTo(player.model.position);
 
