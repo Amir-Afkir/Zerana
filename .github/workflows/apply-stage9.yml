@@ -1,0 +1,40 @@
+name: Stage 9 verified source transfer
+on:
+  push:
+    branches: [work/stage9-source-snapshot]
+    paths: ['transfer/stage9/**', '.github/workflows/apply-stage9.yml']
+permissions:
+  contents: write
+jobs:
+  transfer:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Verify source payload
+        run: |
+          python - <<'PY'
+          import base64, hashlib, lzma
+          from pathlib import Path
+          encoded = ''.join(Path(f'transfer/stage9/part{i}.b64').read_text() for i in range(6))
+          patch = lzma.decompress(base64.b64decode(encoded, validate=True))
+          assert len(patch) == 96255
+          assert hashlib.sha256(patch).hexdigest() == '1afd69e15a7aa59a5d4009da60af629847bdfbd0ef635ba81ba345ccc7a1a1ca'
+          Path('/tmp/zerana-stage9.patch').write_bytes(patch)
+          PY
+      - name: Apply only to the exact isolated baseline
+        run: |
+          set -euo pipefail
+          git fetch origin feature/v2-road-kernel
+          test "$(git rev-parse FETCH_HEAD)" = '7596bea3890225c3ab499c8d24501f6b19c84be7'
+          git checkout --detach FETCH_HEAD
+          git apply --check --index /tmp/zerana-stage9.patch
+          git apply --index /tmp/zerana-stage9.patch
+          test "$(git write-tree)" = '8621d69a9f083eff9c9ef0ca27a5bb39127dab4f'
+          test "$(git diff --cached --name-only | wc -l | tr -d ' ')" = '21'
+          git config user.name 'Zerana source transfer'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'feat(v2): add bounded road kernel and centerline diagnostics'
+          git push origin HEAD:refs/heads/feature/v2-road-kernel
