@@ -1,3 +1,4 @@
+import type { WorldCellId } from '../geo/cell-scheme.js';
 import type { GeoAnchor } from '../geo/enu.js';
 import { createGeoAnchor } from '../geo/enu.js';
 import type { TerrainCellPacket } from '../generation/terrain/terrain-builder.js';
@@ -36,6 +37,8 @@ function endpoints(c: Capsule): readonly [Vec3,Vec3] {
 export class TerrainPhysics implements PhysicsWorld {
   private colliders: readonly Collider[];
   private count = 0;
+  private activeKeys: ReadonlySet<string> | null = null;
+  private built = 0;
   private frame: GeoAnchor;
   private maxCells: number;
   private readonly allowPreview: boolean;
@@ -54,6 +57,7 @@ export class TerrainPhysics implements PhysicsWorld {
     }
     this.count=packets.reduce((n,p)=>n+p.indices.length/3,0);
     if(this.count>COLLISION.maxTriangles) throw new RangeError('Collision budget exceeded; reduce subdivisions');
+    this.built=packets.length;
     this.colliders=packets.map(p=>{
       const cell=createGeoAnchor(p.anchor.geodetic);
       return {packet:p,anchor:cell,index:new TriangleIndex(p.positions,p.indices),toCell:frameTransform(anchor,cell),fromCell:frameTransform(cell,anchor)};
@@ -68,6 +72,8 @@ export class TerrainPhysics implements PhysicsWorld {
     if(new Set(packets.map(key)).size!==packets.length) throw new Error('Duplicate collider cell');
     const count=packets.reduce((n,p)=>n+p.indices.length/3,0);
     if(count>COLLISION.maxTriangles) throw new RangeError('Collision budget exceeded');
+    if (this.activeKeys && [...this.activeKeys].some(k => !packets.some(p => key(p) === k)))
+      throw new Error('ACTIVE_COLLIDER_EVICTION');
     const old=new Map(this.colliders.map(c=>[key(c.packet),c]));
     const next=packets.map(p=>{
       if(p.altitudeAuthority!==this.altitudeAuthority ||
@@ -78,8 +84,24 @@ export class TerrainPhysics implements PhysicsWorld {
       return {packet:p,anchor:cell,index:new TriangleIndex(p.positions,p.indices),
         toCell:frameTransform(this.frame,cell),fromCell:frameTransform(cell,this.frame)};
     });
+    // Count only successfully published builds; existing identities are reused.
+    this.built += next.filter(c => old.get(key(c.packet)) !== c).length;
     this.colliders=next;this.count=count;
   }
+  /** Visibility and collision activation change together, without rebuilding a BVH. */
+  setActiveCells(ids: readonly WorldCellId[] | null): void {
+    if (ids === null) { this.activeKeys = null; return; }
+    const keys = new Set(ids.map(id => `${id.level}/${id.x}/${id.y}`));
+    const resident = new Set(this.colliders.map(c => `${c.packet.id.level}/${c.packet.id.x}/${c.packet.id.y}`));
+    if (ids.some(id => id.scheme !== 'web-mercator') || !keys.size || keys.size !== ids.length || [...keys].some(key => !resident.has(key)))
+      throw new Error('ACTIVE_COLLIDER_NOT_RESIDENT');
+    this.activeKeys = keys;
+  }
+  private enabled(c: Collider): boolean {
+    return this.activeKeys === null || this.activeKeys.has(`${c.packet.id.level}/${c.packet.id.x}/${c.packet.id.y}`);
+  }
+  get activeColliderCount(): number { return this.colliders.filter(c => this.enabled(c)).length; }
+  get bvhBuildCount(): number { return this.built; }
   setCapacity(capacity: number): void {
     if(!Number.isInteger(capacity)||capacity<this.colliders.length||capacity<1||capacity>64) throw new RangeError('Invalid collider capacity');
     this.maxCells=capacity;
@@ -91,10 +113,11 @@ export class TerrainPhysics implements PhysicsWorld {
     this.colliders=this.colliders.map(c=>({...c,toCell:frameTransform(anchor,c.anchor),fromCell:frameTransform(c.anchor,anchor)}));
     this.frame=anchor;
   }
-  dispose(): void { this.colliders=[];this.count=0; }
+  dispose(): void { this.colliders=[];this.count=0;this.activeKeys=null; }
   private candidates(points: readonly Vec3[],radius: number): readonly Triangle[]{
     const result: Triangle[]=[];
     for(const c of this.colliders){
+      if (!this.enabled(c)) continue;
       const box=bounds(points.map(p=>transformPoint(p,c.toCell)),radius);
       const triangles=c.index.query(box);
       if(result.length+triangles.length>COLLISION.maxQueryTriangles) throw new RangeError('Collision query budget exceeded');
@@ -157,6 +180,7 @@ export class TerrainPhysics implements PhysicsWorld {
     if(!Number.isFinite(maxDistance)||maxDistance<=0||maxDistance>512) throw new RangeError('Invalid ray length');
     let nearest=maxDistance,normal: Vec3|null=null;
     for(const c of this.colliders){
+      if (!this.enabled(c)) continue;
       const from=transformPoint(origin,c.toCell),dir=transformDirection(direction,c.toCell);
       for(const t of c.index.query(bounds([from,add(from,scale(dir,maxDistance))],2e-5))){
         const distance=rayTriangle(from,dir,t,2e-5);

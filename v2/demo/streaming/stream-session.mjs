@@ -1,5 +1,8 @@
 import './stream.css';
 import { CellScheduler } from '../../src/streaming/scheduler.ts';
+import { selectSlidingWindow } from '../../src/streaming/sliding-window.ts';
+import { RecyclingIndex } from '../../src/streaming/recycling.ts';
+import { MercatorCellScheme } from '../../src/geo/mercator-cell-scheme.ts';
 import { WeightedLru } from '../../src/streaming/weighted-lru.ts';
 import { selectStreamCells, streamCellKey, STREAM_LIMITS, DEFAULT_STREAM } from '../../src/streaming/selection.ts';
 import { measureTerrainSeams } from '../../src/debug/seam-metrics.ts';
@@ -9,6 +12,7 @@ import { packetBytes, validatePacket } from './packet.mjs';
 import { clearPersistentPackets } from './indexed-cache.mjs';
 
 const HTTP_LIMIT=256;
+const scheme=new MercatorCellScheme();
 /** Owns one immutable source configuration; no fake player or world position.
  * All scene/physics commits happen at the beginning of a render frame. */
 export class StreamSession {
@@ -18,7 +22,7 @@ export class StreamSession {
     this.events=new AbortController();
     this.panel=document.createElement('section');this.panel.className='stream-panel';
     this.panel.innerHTML=`<h2>Monde continu</h2>
-      <label>Rayons métriques<select id="stream-radius"><option value="normal">120 m visibles / 200 m retenus</option><option value="small">20 m / 35 m — test rapproché</option></select></label>
+      <label>Fenêtre de chargement<select id="stream-radius"><option value="window" selected>3×3 + préchargement + recyclage</option><option value="normal">120 m visibles / 200 m retenus</option><option value="small">20 m / 35 m — test rapproché</option></select></label>
       <label class="stream-check"><input type="checkbox" id="stream-cache" checked /> Cache local synthétique (16 Mio max.)</label>
       <label class="stream-check" id="stream-network-option" hidden><input type="checkbox" id="stream-network-consent" /> J’autorise jusqu’à 256 requêtes Mapbox supplémentaires.</label>
       <div class="stream-actions"><button id="stream-toggle" type="button" disabled>Activer le streaming</button><button id="stream-clear" type="button">Vider le cache</button></div>
@@ -30,6 +34,9 @@ export class StreamSession {
       const ok=await clearPersistentPackets();if(!this.disposed)this.message(ok?'Cache synthétique vidé.':'Cache occupé ou indisponible ; la scène est conservée.');},{signal:this.events.signal});
     this.$('stream-network-consent').addEventListener('change',()=>{if(this.active&&this.config.source==='mapbox'&&!this.$('stream-network-consent').checked)this.stop('STREAM_CONSENT_REVOKED');},{signal:this.events.signal});
     this.view.onBeforeFrame=dt=>this.update(dt);
+    this.player.beforeRespawn=()=>{
+      if(this.sliding&&this.pinned?.size){this.present(this.pinned);this.nextSelection=0;}
+    };
   }
   message(text){this.$('stream-status').textContent=text;}
   buttons(){
@@ -38,10 +45,11 @@ export class StreamSession {
     this.$('stream-radius').disabled=this.active;this.$('stream-cache').disabled=this.active;
   }
   install(packets,textures,config) {
-    this.stop();this.config=Object.freeze({...config});this.loaded.clear();
+    this.stop();this.sliding=false;this.recycling=null;this.plan=null;this.config=Object.freeze({...config});this.loaded.clear();
     for(const packet of packets)this.loaded.set(streamCellKey(packet.id),{packet,
       texture:textures?.get(`${packet.id.level}/${packet.id.x}/${packet.id.y}`)||null,evidence:[],attributions:[]});
     // The small original spawn patch is pinned for safe respawn, with a fixed cap.
+    this.shown=new Set(this.loaded.keys());this.seen=new Set(this.shown);
     this.pinned=new Set(this.loaded.keys());this.$('stream-network-option').hidden=config.source!=='mapbox';this.$('stream-network-consent').checked=false;this.error=null;this.buttons();this.report();
   }
   start() {
@@ -49,11 +57,17 @@ export class StreamSession {
     if(this.config.source==='mapbox'&&!this.$('stream-network-consent').checked){this.message('Autorise explicitement le budget Mapbox avant de lancer le streaming.');return;}
     if(![16,32].includes(this.config.subdivisions)){this.message('Streaming limité à 16/32 subdivisions. Régénère la scène en 32.');return;}
     const radii=this.$('stream-radius').value==='small'?{physicsRadiusMeters:4,visibleRadiusMeters:20,retentionRadiusMeters:35}:{};
+    this.sliding=this.$('stream-radius').value==='window';
     this.settings={...DEFAULT_STREAM,...radii,level:this.config.level};
     this.velocity=[0,0,0];
-    try{const plan=selectStreamCells(this.player.player.state.ecefPosition,this.velocity,this.settings);this.checkCapacity(plan);}
+    try{const plan=this.select(this.player.player.state.ecefPosition);this.checkCapacity(plan);}
     catch(error){this.message(`${error.message} — choisis un niveau moins fin ou un rayon réduit.`);return;}
     this.player.physics.setCapacity(STREAM_LIMITS.maxCells);
+    this.recycling=new RecyclingIndex(64,this.sliding?32*1048576:64*1048576);
+    for(const [key,bundle] of this.loaded)this.recycling.insert(key,packetBytes(bundle));
+    if(!this.sliding){this.shown=new Set(this.loaded.keys());this.view.setVisibleCells([...this.loaded.values()].map(b=>b.packet.id));this.player.physics.setActiveCells(null);}
+    else this.player.physics.setActiveCells([...this.shown].map(k=>this.loaded.get(k).packet.id));
+    this.reused=0;this.windowSwitches=0;this.maxSwitchMs=0;this.waiting=false;this.plan=null;
     this.epoch++;this.active=true;this.error=null;this.nextSelection=0;this.lastReport=0;this.now=0;
     this.scheduler=new CellScheduler();this.cache=new WeightedLru(STREAM_LIMITS.cacheBytes,STREAM_LIMITS.cacheEntries);
     this.pool=new StreamWorkerPool(this.config.source==='mapbox'?1:Math.max(1,Math.min(2,(navigator.hardwareConcurrency||2)-2)));
@@ -61,8 +75,27 @@ export class StreamSession {
     this.installed=0;this.peakCells=this.loaded.size;this.peakQueuedBytes=0;this.maxCommitMs=0;this.sourceCacheBytes=0;
     this.persistent=this.$('stream-cache').checked&&this.config.source==='synthetic';
     for(const [key,bundle] of this.loaded)this.scheduler.seed({key,id:bundle.packet.id,priority:0,distanceMeters:0,visible:true,physics:true});
-    this.message(this.config.source==='mapbox'?'Streaming Mapbox expérimental : budget 256 requêtes.':'Streaming synthétique actif.');
+    this.message(this.config.source==='mapbox'?'Streaming Mapbox expérimental : budget 256 requêtes.':this.sliding?'Fenêtre 3×3 active : préparation des voisines.':'Streaming métrique synthétique actif.');
     this.buttons();this.report();
+  }
+  select(position){return this.sliding?selectSlidingWindow(position,this.velocity,this.config.level):selectStreamCells(position,this.velocity,this.settings);}
+  protectedKeys(){return new Set([...(this.plan?.wanted||[]).map(i=>i.key),...this.shown,...this.pinned]);}
+  /** Commit only an entirely ready window. One synchronous render/physics switch. */
+  present(keys){
+    if([...keys].some(key=>!this.loaded.has(key)))return false;
+    if(keys.size===this.shown.size&&[...keys].every(k=>this.shown.has(k)))return true;
+    const start=performance.now(),ids=[...keys].map(k=>this.loaded.get(k).packet.id);
+    const previous=[...this.shown].map(k=>this.loaded.get(k).packet.id);
+    this.player.physics.setActiveCells(ids);
+    try{this.view.setVisibleCells(ids);}catch(error){this.player.physics.setActiveCells(previous);throw error;}
+    for(const key of keys)if(!this.shown.has(key)&&this.seen.has(key))this.reused++;
+    this.shown=new Set(keys);for(const key of keys)this.seen.add(key);
+    this.recycling?.touch(keys);this.windowSwitches++;this.metricsDirty=true;this.player.report();
+    this.maxSwitchMs=Math.max(this.maxSwitchMs,performance.now()-start);return true;
+  }
+  trimRecycled(reservedBytes=0,reservedCells=0){
+    const key=this.recycling.victim(this.protectedKeys(),reservedBytes,reservedCells);
+    if(key&&this.scheduler.evictRetained(key))this.evict([key]);
   }
   checkCapacity(plan){if(new Set([...plan.wanted.map(i=>i.key),...this.pinned]).size>STREAM_LIMITS.maxCells)throw new Error('STREAM_RESIDENCY_BUDGET');}
   stop(reason=null) {
@@ -81,8 +114,8 @@ export class StreamSession {
     // No fall-through frame: collision and visual residency change synchronously.
     this.player.physics.syncPackets(remaining);
     for(const key of remove){const value=this.loaded.get(key);this.view.removeCell(value.packet.id);this.loaded.delete(key);
-      this.cache.set(key,value,packetBytes(value));this.evicted++;}
-    this.onChanged([...this.loaded.values()].map(v=>v.packet));
+      this.cache.set(key,value,packetBytes(value));this.recycling?.delete(key);this.seen?.delete(key);this.shown?.delete(key);this.evicted++;}
+    this.metricsDirty=true;
   }
   dispatch(job) {
     const {ticket,interest}=job,epoch=this.epoch;
@@ -127,8 +160,10 @@ export class StreamSession {
       const factor=1-Math.exp(-Math.min(dt,.1)/.25);
       this.velocity=this.velocity.map((v,i)=>v+(state.velocityEcefMetersPerSecond[i]-v)*factor);
       if(this.now>=this.nextSelection){
-        this.plan=selectStreamCells(state.ecefPosition,this.velocity,this.settings);this.checkCapacity(this.plan);this.nextSelection=this.now+100;
-        const actions=this.scheduler.reconcile(this.plan,this.pinned);
+        this.plan=this.select(state.ecefPosition);this.checkCapacity(this.plan);this.nextSelection=this.now+100;
+        // In window mode, residency is bounded by LRU/count/bytes, not distance.
+        const plan=this.sliding?{...this.plan,retained:new Set([...this.plan.retained,...this.loaded.keys()])}:this.plan;
+        const actions=this.scheduler.reconcile(plan,this.pinned);
         for(const ticket of actions.cancel)this.controllers.get(ticket.revision)?.abort();
         this.evict(actions.evict);
       }
@@ -136,27 +171,38 @@ export class StreamSession {
       if(performance.now()-frameStart<STREAM_LIMITS.uploadBudgetMs){
         const ready=this.scheduler.ready();
         if(ready){
-          if(this.loaded.size>=STREAM_LIMITS.maxCells){
+          if(this.sliding)this.trimRecycled(packetBytes(ready.value),1);
+          if(!this.sliding&&this.loaded.size>=STREAM_LIMITS.maxCells){
             const keep=new Set(this.plan.wanted.map(i=>i.key));
             const candidate=[...this.loaded.keys()].find(k=>!keep.has(k)&&!this.pinned.has(k));
             if(candidate&&this.scheduler.evictRetained(candidate))this.evict([candidate]);
           }
-          if(this.loaded.size<STREAM_LIMITS.maxCells){
+          if(this.loaded.size<STREAM_LIMITS.maxCells&&this.recycling.fits(packetBytes(ready.value))){
             const start=performance.now(),bundle=ready.value;
             try{
               // Source snapshots can differ. Concrete shared keys, vertices and normals
               // must still agree, otherwise keep the last valid surface and stop this cell.
               const existing=[...this.loaded.values()].map(v=>v.packet),next=[...existing,bundle.packet];
-              const seams=measureTerrainSeams(next,this.player.player.frame,{allowSourceSnapshots:true});
+              // Only the new cell's four shared edges can introduce a new seam.
+              const neighbors=scheme.getNeighbors(bundle.packet.id).map(id=>this.loaded.get(streamCellKey(id))?.packet).filter(Boolean);
+              const seams=measureTerrainSeams([bundle.packet,...neighbors],this.player.player.frame,{allowSourceSnapshots:true});
               if(seams.mismatchedKeys||seams.maxGapMeters>.001||seams.maxNormalDelta>.001)throw new Error('STREAM_SEAM_MISMATCH');
-              this.view.addCell(bundle.packet,bundle.texture);
+              this.view.addCell(bundle.packet,bundle.texture,{visible:!this.sliding});
               try{this.player.physics.syncPackets(next);}catch(error){this.view.removeCell(bundle.packet.id);throw error;}
-              this.loaded.set(ready.ticket.key,bundle);this.scheduler.installed(ready.ticket);this.installed++;
-              this.onChanged(next,bundle.attributions);this.peakCells=Math.max(this.peakCells,this.loaded.size);
+              this.loaded.set(ready.ticket.key,bundle);
+              this.recycling.insert(ready.ticket.key,packetBytes(bundle));
+              this.scheduler.installed(ready.ticket);this.installed++;
+              if(!this.sliding)this.shown.add(ready.ticket.key);
+              this.metricsDirty=true;if(bundle.attributions?.length)this.pendingAttributions=bundle.attributions;
+              this.peakCells=Math.max(this.peakCells,this.loaded.size);
             }catch(error){this.scheduler.fail(ready.ticket,error.message,this.now,false);this.error=error.message;}
             this.maxCommitMs=Math.max(this.maxCommitMs,performance.now()-start);
           }
         }
+      }
+      if(this.sliding){
+        this.waiting=!this.present(this.plan.activeKeys);
+        this.trimRecycled();
       }
       // Generation may not outrun the small byte-bounded CPU-ready/upload queue.
       for(let i=0;i<2&&this.pool.available>0&&this.active;i++){
@@ -167,7 +213,17 @@ export class StreamSession {
   }
   report(){
     if(!this.loaded)return;
+    if(this.metricsDirty){
+      const values=this.sliding?[...this.shown].map(k=>this.loaded.get(k)):[...this.loaded.values()];
+      this.onChanged(values.map(v=>v.packet),this.pendingAttributions);this.pendingAttributions=null;this.metricsDirty=false;
+    }
     const summary={active:this.active,source:this.config?.source,epoch:this.epoch,settings:this.settings,
+      mode:this.sliding?'sliding-3x3':'metric-radius',shownKeys:[...(this.shown||[])],
+      activeKeys:[...(this.plan?.activeKeys||[])],prefetchKeys:[...(this.plan?.prefetchKeys||[])],
+      recycledKeys:[...this.loaded.keys()].filter(k=>!this.shown?.has(k)&&!this.plan?.wanted.some(i=>i.key===k)&&!this.pinned?.has(k)),
+      reused:this.reused||0,windowSwitches:this.windowSwitches||0,waitingForWindow:this.waiting||false,
+      maxSwitchMs:this.maxSwitchMs||0,residentPayloadBytes:this.recycling?.bytes||0,maxResidentPayloadBytes:this.recycling?.maxBytes||32*1048576,maxRecycled:12,
+      bvhBuildCount:this.player.physics?.bvhBuildCount||0,
       error:this.error,installed:this.installed||0,evicted:this.evicted||0,workerCompleted:this.workerCompleted||0,
       workers:this.pool?{created:this.pool.created,terminated:this.pool.terminated,available:this.pool.available}:null,
       renderedKeys:[...this.loaded.keys()],pinnedKeys:[...(this.pinned||[])],centerKey:this.plan?.centerKey,
@@ -178,11 +234,12 @@ export class StreamSession {
       maxCommitMs:this.maxCommitMs||0,peakQueuedBytes:this.peakQueuedBytes||0,
       scheduler:this.scheduler?.snapshot()||null};
     window.__ZERANA_STREAM_DEBUG__=summary;
-    const rows=[['Cellules résidentes',`${summary.cells} / ${summary.maxCells}`],['Nouvelles / libérées',`${summary.installed} / ${summary.evicted}`],
+    const rows=[['Visibles / recyclées',`${summary.shownKeys.length} / ${summary.recycledKeys.length}`],['Réactivées sans génération',summary.reused],['Cellules résidentes',`${summary.cells} / ${summary.maxCells}`],['Nouvelles / libérées',`${summary.installed} / ${summary.evicted}`],
       ['Cache mémoire',`${(summary.cacheBytes/1048576).toFixed(2)} Mio`],['Cache disque : hits',summary.diskHits],
       ['Requêtes Mapbox',`${summary.httpActual} / ${HTTP_LIMIT}`],['Commit cellule max.',`${summary.maxCommitMs.toFixed(1)} ms`]];
     this.$('stream-metrics').replaceChildren(...rows.flatMap(([key,value])=>{const a=document.createElement('dt'),b=document.createElement('dd');a.textContent=key;b.textContent=String(value);return[a,b];}));
+    if(this.active&&this.sliding&&!summary.scheduler?.errors.length)this.message(this.waiting?'Préparation de la fenêtre suivante ; terrain précédent conservé.':'Fenêtre 3×3 prête. Les cellules quittées restent en recyclage.');
     if(this.active&&summary.scheduler?.errors.length)this.message(`Chargements en erreur : ${summary.scheduler.errors.join(', ')}. Le sol valide est conservé.`);
   }
-  dispose(){this.stop();this.disposed=true;this.loaded.clear();this.events.abort();this.view.onBeforeFrame=null;this.panel.remove();window.__ZERANA_STREAM_DEBUG__={disposed:true};}
+  dispose(){this.stop();this.disposed=true;this.loaded.clear();this.events.abort();this.view.onBeforeFrame=null;this.player.beforeRespawn=null;this.panel.remove();window.__ZERANA_STREAM_DEBUG__={disposed:true};}
 }

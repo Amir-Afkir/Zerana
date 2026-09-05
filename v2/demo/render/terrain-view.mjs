@@ -86,7 +86,7 @@ export class TerrainView{
     applyFrame(this.markerRoot,frameTransform(this.markerAnchor,world));this.patchRoot.add(this.markerRoot);
     this.scene.updateMatrixWorld(true);
   }
-  addCell(packet,imagePacket){
+  addCell(packet,imagePacket,{visible=true}={}){
     if(this.cellViews.some(c=>c.packet.id.level===packet.id.level&&c.packet.id.x===packet.id.x&&c.packet.id.y===packet.id.y))throw new Error('DUPLICATE_RENDER_CELL');
     const resources=new Set();
     const own=resource=>{resources.add(resource);this.own(resource);return resource;};
@@ -106,7 +106,7 @@ export class TerrainView{
         texture.repeat.setScalar(image.uvScale);texture.offset.setScalar(image.uvOffset);texture.needsUpdate=true;
         surfaceMaterial=own(new THREE.MeshStandardMaterial({map:texture,roughness:1,metalness:0}));
       }
-      const root=new THREE.Group(),mesh=new THREE.Mesh(geometry,surfaceMaterial);
+      const root=new THREE.Group(),mesh=new THREE.Mesh(geometry,surfaceMaterial);root.visible=visible;
       const wire=new THREE.LineSegments(own(new THREE.WireframeGeometry(geometry)),this.wireMaterial);
       const border=[];const n=packet.subdivisions,w=n+1;
       const add=i=>border.push(packet.positions[i*3],packet.positions[i*3+1],packet.positions[i*3+2]);
@@ -120,6 +120,12 @@ export class TerrainView{
       this.cellViews.push({packet,root,mesh,wire,surfaceMaterial,resources});
       this.setModes(this.modes || {wireframe:true,normals:false,metricGrid:false});
     }catch(error){for(const resource of resources){resource.dispose();this.resources.delete(resource);}throw error;}
+  }
+  setVisibleCells(ids){
+    const key=id=>`${id.level}/${id.x}/${id.y}`;
+    const keys=new Set(ids.map(key)), resident=new Set(this.cellViews.map(c=>key(c.packet.id)));
+    if(!keys.size || [...keys].some(k=>!resident.has(k)))throw new Error('VISIBLE_CELL_NOT_RESIDENT');
+    for(const cell of this.cellViews)cell.root.visible=keys.has(key(cell.packet.id));
   }
   removeCell(id){
     const cell=this.cellViews.find(c=>c.packet.id.level===id.level&&c.packet.id.x===id.x&&c.packet.id.y===id.y);
@@ -135,7 +141,7 @@ export class TerrainView{
   }
   overview(){
     const bounds=new THREE.Box3();this.scene.updateMatrixWorld(true);
-    for(const cell of this.cellViews)bounds.expandByObject(cell.mesh);
+    for(const cell of this.cellViews)if(cell.root.visible)bounds.expandByObject(cell.mesh);
     if(bounds.isEmpty())return;
     const center=bounds.getCenter(new THREE.Vector3()),size=bounds.getSize(new THREE.Vector3());
     const extent=Math.max(size.x,size.y,size.z,10);
@@ -171,6 +177,8 @@ export class TerrainView{
       texturedCells:this.cellViews.filter(cell=>cell.surfaceMaterial!==this.surfaceMaterial).length,markerHeightMeters:MARKER_HEIGHT_METERS,
       markerEcef:this.markerEcef,markerNdc:projected.toArray(),
       geometryIds:this.cellViews.map(cell=>cell.mesh.geometry.uuid),
+      cellResources:this.cellViews.map(cell=>({key:`web-mercator/${cell.packet.id.level}/${cell.packet.id.x}/${cell.packet.id.y}`,
+        visible:cell.root.visible,geometryId:cell.mesh.geometry.uuid})),
       bufferFirstVertices:this.cellViews.map(cell=>Array.from(cell.packet.positions.slice(0,3)))};
   }
   dispose(){

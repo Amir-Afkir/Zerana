@@ -10,7 +10,7 @@ Une PR ouverte ou une compilation réussie ne prouve pas une publication fonctio
 - Première préversion V2 publiée : `07ac40b699d2f200e1dd21b3f4900c9d0be827fd`.
 - Joueur V2 publié avant streaming : `f567ee65ce5db8a68743823acbf2472e4cd3f99e`.
 - Jeu historique : `/Zerana/` ; laboratoire indépendant : `/Zerana/v2/`.
-- Les sources V1, assets historiques et lockfiles ne sont pas modifiés par les étapes 5–6.
+- Les sources V1, assets historiques et lockfiles ne sont pas modifiés par les étapes 5–7.
 - Le build combiné compare les sources V1 à la baseline et conserve les empreintes
   des fichiers V1 lors de l'ajout du laboratoire.
 - La copie locale du Mac n'est pas modifiée par ces interventions.
@@ -96,6 +96,28 @@ plafond préemptif. Ce constat ne doit pas être remplacé par une promesse de 6
 Les résultats exacts du dernier SHA et de sa publication sont consignés dans la
 PR #6 ; les tests sont aussi ajoutés aux contrôles avant/après déploiement.
 Voir `REFONTE_STAGE6.md` et ADR-006 pour le périmètre mathématique et les limites.
+
+### Étape 7 — fenêtre glissante et recyclage chaud
+
+Implémentation du plan validé : fenêtre logique 3×3, bande directionnelle de trois
+cellules (cinq en diagonale), maintien de l'ancienne fenêtre jusqu'à disponibilité
+de la suivante. Les cellules quittées gardent leurs meshes et BVH ; elles restent
+cachées et exclues des collisions jusqu'à réactivation. Le rebase s'applique aussi
+aux ressources cachées. Le départ est réactivé avant une réapparition.
+
+Recyclage LRU de 12 cellules non protégées après éviction progressive ; plafonds
+avant admission de 64 résidentes et 32 Mio de payloads comptabilisés. Ces octets
+ne sont pas le heap total ou la mémoire GPU. Les modes métriques de l'étape 6,
+le cache CPU, les workers et les garde-fous Mapbox restent disponibles.
+
+26 nouveaux tests CPU réussissent localement. La CI doit exécuter les 245 anciens
+et les 26 nouveaux, plus un parcours clavier de demi-tour, éviction et chargement
+lent simulé. Les résultats effectivement obtenus et le SHA servi sont consignés
+dans la PR de livraison ; ne pas inférer une publication du seul contenu du code.
+
+Le 3×3 n'est pas un rayon constant en mètres. Cette tranche ne garantit pas des
+chargements invisibles, n'introduit pas de LOD et ne sépare pas encore le terrain
+Mapbox de son imagerie. Voir `REFONTE_STAGE7.md` et ADR-007.
 
 ## Ce qui reste à développer ou valider
 
