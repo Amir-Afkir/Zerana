@@ -15,8 +15,8 @@ jobs:
           persist-credentials: false
       - name: Verify exact reviewed patch
         run: |
-          cat .stage8-transfer/*.patch > "$RUNNER_TEMP/stage8.patch"
-          echo 'fbadf09bd3e8f66fe35aa59abdfe3b8caa50f481a5daa468100a9ce11c597c5d  '"$RUNNER_TEMP/stage8.patch" | sha256sum -c -
+          cp .stage8-transfer/update.patch "$RUNNER_TEMP/stage8.patch"
+          echo '75aed0785935092285463ccd0e40532362e501f6fba897434c1ec42f6d73a5e8  '"$RUNNER_TEMP/stage8.patch" | sha256sum -c -
       - uses: actions/checkout@v4
         with:
           ref: work/stage8-implementation
@@ -26,12 +26,12 @@ jobs:
         working-directory: target
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = e83dd50d96c205733e98b1779711a6f40287f175
+          test "$(git rev-parse HEAD)" = ea9d54b1f9b552fea304160be5943e070cd9a567
           git apply --check --index --unidiff-zero "$RUNNER_TEMP/stage8.patch"
           git apply --index --unidiff-zero "$RUNNER_TEMP/stage8.patch"
           git diff --cached --check
-          test "$(git write-tree)" = effcf429bcb130189ffce5f667b276d3a105c1c6
+          test "$(git write-tree)" = 97b24277c255d342833a870fd0ceb75cab08e6be
           git config user.name 'Zerana source transfer'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git commit -m 'feat(v2): staged collider admission, progressive imagery and direct exploration'
+          git commit -m 'fix(v2): bound visited-cell diagnostics to retained residency'
           git push origin HEAD:refs/heads/work/stage8-implementation
