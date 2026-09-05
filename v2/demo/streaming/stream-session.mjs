@@ -127,7 +127,7 @@ export class StreamSession {
     for(const key of remove){
       if(this.imageFlight?.key===key)this.imageFlight.controller.abort();
       this.imageFailures?.delete(key);
-      const value=this.loaded.get(key);this.view.removeCell(value.packet.id);this.loaded.delete(key);
+      const value=this.loaded.get(key);this.view.removeCell(value.packet.id);this.loaded.delete(key);this.seen.delete(key);
       this.cache.set(key,value,packetBytes(value));this.recycling?.delete(key);this.seen?.delete(key);this.shown?.delete(key);this.evicted++;}
     this.metricsDirty=true;
   }
@@ -303,7 +303,7 @@ export class StreamSession {
       recycledKeys:[...this.loaded.keys()].filter(k=>!this.shown?.has(k)&&!this.plan?.wanted.some(i=>i.key===k)&&!this.pinned?.has(k)),
       reused:this.reused||0,windowSwitches:this.windowSwitches||0,waitingForWindow:this.waiting||false,
       maxSwitchMs:this.maxSwitchMs||0,residentPayloadBytes:this.recycling?.bytes||0,maxResidentPayloadBytes:this.recycling?.maxBytes||32*1048576,maxRecycled:12,
-      bvhBuildCount:this.player.physics?.bvhBuildCount||0,
+      trackedResidentKeys:this.seen?.size||0,bvhBuildCount:this.player.physics?.bvhBuildCount||0,
       mainThreadBvhBuildCount:this.player.physics?.mainThreadBvhBuildCount||0,
       preparedBvhAdoptions:this.player.physics?.preparedBvhAdoptions||0,
       admissionStage:this.admission?.stage||null,maxStageMs:this.maxStageMs||{},maxCellWorkMs:this.maxCellWorkMs||0,
@@ -326,5 +326,5 @@ export class StreamSession {
     if(this.active&&this.sliding&&!summary.scheduler?.errors.length)this.message(this.waiting?'Préparation de la fenêtre suivante ; terrain précédent conservé.':'Fenêtre 3×3 prête. Les cellules quittées restent en recyclage.');
     if(this.active&&summary.scheduler?.errors.length)this.message(`Chargements en erreur : ${summary.scheduler.errors.join(', ')}. Le sol valide est conservé.`);
   }
-  dispose(){this.stop();this.disposed=true;this.loaded.clear();this.events.abort();this.view.onBeforeFrame=null;this.player.beforeRespawn=null;this.panel.remove();window.__ZERANA_STREAM_DEBUG__={disposed:true};}
+  dispose(){this.stop();this.disposed=true;this.loaded.clear();this.seen?.clear();this.events.abort();this.view.onBeforeFrame=null;this.player.beforeRespawn=null;this.panel.remove();window.__ZERANA_STREAM_DEBUG__={disposed:true};}
 }

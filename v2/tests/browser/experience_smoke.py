@@ -178,6 +178,7 @@ async def run(url):
                     player = await page.evaluate('window.__ZERANA_PLAYER_DEBUG__')
                     assert player['runtimeError'] is None and player['state']['grounded']
                     assert stream['active'] and stream['cells'] <= 64
+                    assert stream['trackedResidentKeys'] <= stream['cells']
                     assert stream['residentPayloadBytes'] <= 32*1048576 and stream['cacheBytes'] <= 16*1048576
                     assert stream['mainThreadBvhBuildCount'] == 1
                     samples.append({'wallSeconds': time.monotonic()-start, 'heapAfterGC': heap, 'stream': stream})
