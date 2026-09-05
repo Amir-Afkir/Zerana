@@ -57,14 +57,20 @@ export class StreamSession {
     if(this.config.source==='mapbox'&&!this.$('stream-network-consent').checked){this.message('Autorise explicitement le budget Mapbox avant de lancer le streaming.');return;}
     if(![16,32].includes(this.config.subdivisions)){this.message('Streaming limité à 16/32 subdivisions. Régénère la scène en 32.');return;}
     const radii=this.$('stream-radius').value==='small'?{physicsRadiusMeters:4,visibleRadiusMeters:20,retentionRadiusMeters:35}:{};
-    this.sliding=this.$('stream-radius').value==='window';
-    this.settings={...DEFAULT_STREAM,...radii,level:this.config.level};
-    this.velocity=[0,0,0];
-    try{const plan=this.select(this.player.player.state.ecefPosition);this.checkCapacity(plan);}
-    catch(error){this.message(`${error.message} — choisis un niveau moins fin ou un rayon réduit.`);return;}
+    const sliding=this.$('stream-radius').value==='window';
+    const settings={...DEFAULT_STREAM,...radii,level:this.config.level},velocity=[0,0,0];
+    let recycling;
+    // Prepare and validate before changing the stopped session's presentation mode.
+    // A rejected mode/capacity must not break the hidden spawn or active colliders.
+    try{
+      const position=this.player.player.state.ecefPosition;
+      const plan=sliding?selectSlidingWindow(position,velocity,this.config.level):selectStreamCells(position,velocity,settings);
+      this.checkCapacity(plan);
+      recycling=new RecyclingIndex(64,sliding?32*1048576:64*1048576);
+      for(const [key,bundle] of this.loaded)recycling.insert(key,packetBytes(bundle));
+    }catch(error){this.message(`${error.message} — choisis un niveau moins fin ou un rayon réduit.`);return;}
     this.player.physics.setCapacity(STREAM_LIMITS.maxCells);
-    this.recycling=new RecyclingIndex(64,this.sliding?32*1048576:64*1048576);
-    for(const [key,bundle] of this.loaded)this.recycling.insert(key,packetBytes(bundle));
+    this.sliding=sliding;this.settings=settings;this.velocity=velocity;this.recycling=recycling;
     if(!this.sliding){this.shown=new Set(this.loaded.keys());this.view.setVisibleCells([...this.loaded.values()].map(b=>b.packet.id));this.player.physics.setActiveCells(null);}
     else this.player.physics.setActiveCells([...this.shown].map(k=>this.loaded.get(k).packet.id));
     this.reused=0;this.windowSwitches=0;this.maxSwitchMs=0;this.waiting=false;this.plan=null;

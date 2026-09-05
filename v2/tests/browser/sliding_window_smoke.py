@@ -142,8 +142,19 @@ async def run(url):
             report['longerWalk'] = far['stream']
             report['checks'].append('real-cell-turnover-obeys-hot-cache-payload-and-residency-budgets')
             await page.screenshot(path=str(OUTPUT/'sliding-window-synthetic.png'))
+            # At this point spawn is hidden. A rejected mode must preserve its reactivation hook.
+            await page.click('#stream-toggle')
+            await page.select_option('#stream-radius', 'normal')
+            await page.click('#stream-toggle')
+            assert not await page.evaluate('window.__ZERANA_STREAM_DEBUG__.active')
+            assert 'choisis un niveau moins fin' in await page.inner_text('#stream-status')
             await page.click('#player-respawn')
             await page.keyboard.press('Escape')
+            assert await page.evaluate('window.__ZERANA_PLAYER_DEBUG__.runtimeError') is None
+            assert await page.evaluate('window.__ZERANA_PLAYER_DEBUG__.state.grounded')
+            report['checks'].append('rejected-mode-preserves-presentation-and-safe-respawn')
+            await page.select_option('#stream-radius', 'window')
+            await page.click('#stream-toggle')
             await wait_window()
             respawn = await snapshot()
             assert respawn['player']['runtimeError'] is None and respawn['player']['state']['grounded']
