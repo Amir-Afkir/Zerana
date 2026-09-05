@@ -1,5 +1,7 @@
 import './style.css';
 import './providers.css';
+import './preview.css';
+import { isPublicMapboxToken, resolveMapboxToken } from './site-token.mjs';
 import { loadMapboxPatch } from './providers/mapbox-raster.mjs';
 import { geodeticDegrees, geodeticRadians } from '../src/geo/geodetic.ts';
 import { geodeticToEcef, ecefToGeodetic } from '../src/geo/ecef.ts';
@@ -14,6 +16,8 @@ import { measureTerrainSeams } from '../src/debug/seam-metrics.ts';
 import { TerrainView } from './render/terrain-view.mjs';
 
 const $ = id => document.getElementById(id);
+const siteToken = String(import.meta.env.VITE_MAPBOX_API_KEY || '').trim();
+const buildSha = String(import.meta.env.VITE_BUILD_SHA || 'local');
 const places = { paris:[2.35,48.86],equator:[0,0],tanger:[-5.81,35.76],tokyo:[139.69,35.68],antimeridian:[179.99999,35],north:[0,85] };
 let view, packets=[], world, revision=0, rebases=0, sourceId='', cacheSize=0, busy=false, loadController=null, requestRevision=0, providerReport=null;
 function status(message,error=false){$('status').textContent=message;$('status').classList.toggle('error',error);}
@@ -26,7 +30,7 @@ function refreshMetrics(){
   $('metrics').replaceChildren(...rows.flatMap(([name,value])=>{
     const dt=document.createElement('dt'),dd=document.createElement('dd');dt.textContent=name;dd.textContent=String(value);return [dt,dd];
   }));
-  window.__ZERANA_TERRAIN_DEBUG__={revision,rebases,cellCount:packets.length,sourceId,seams,providerReport,...snapshot};
+  window.__ZERANA_TERRAIN_DEBUG__={buildSha,siteTokenConfigured:isPublicMapboxToken(siteToken),revision,rebases,cellCount:packets.length,sourceId,seams,providerReport,...snapshot};
 }
 function modes(){view.setModes({wireframe:$('wireframe').checked,normals:$('normals').checked,metricGrid:$('metric-grid').checked});}
 
@@ -55,7 +59,7 @@ async function build(){
   try{
     const position=geodeticDegrees(degrees(Number($('longitude').value)),degrees(Number($('latitude').value)),meters(0));
     const subdivisions=Number($('subdivisions').value),ids=terrainPatchCells(position,Number($('level').value),Number($('side').value));
-    const result=isMapbox?await loadMapboxPatch({cells:ids,subdivisions,token:$('mapbox-token').value,
+    const result=isMapbox?await loadMapboxPatch({cells:ids,subdivisions,token:resolveMapboxToken($('mapbox-token').value,siteToken),
       allowPreview:$('allow-preview').checked,signal:controller.signal,
       onProgress:(n,total)=>{if(request===requestRevision)status(`Tuiles reçues : ${n}/${total}`);}}):null;
     if(controller.signal.aborted||request!==requestRevision)return;
@@ -83,6 +87,8 @@ async function build(){
 }
 
 try{
+  $('build-version').textContent=`Préversion · ${buildSha.slice(0,12)}`;
+  $('site-token-state').textContent=isPublicMapboxToken(siteToken)?'Token public du site disponible ; laisse ce champ vide pour l’utiliser.':'Aucun token de site configuré ; saisis ton token public.';
   view=new TerrainView($('viewport'),error=>status(error,true));
   $('source-mode').addEventListener('change',()=>{$('provider-options').hidden=$('source-mode').value!=='mapbox';loadController?.abort();});
   $('cancel-load').addEventListener('click',()=>loadController?.abort());
