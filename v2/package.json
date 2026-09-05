@@ -1,0 +1,20 @@
+{
+  "name": "@zerana/geo-kernel",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "clean": "node --input-type=module -e \"import { rmSync } from 'node:fs'; rmSync('dist', { recursive: true, force: true });\"",
+    "lint": "node scripts/check-boundaries.mjs",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.type-tests.json",
+    "build": "npm run clean && tsc -p tsconfig.json",
+    "test": "npm run build && node --test tests/*.test.mjs",
+    "check": "npm run lint && npm run typecheck && npm test"
+  },
+  "devDependencies": {
+    "typescript": "5.8.3"
+  }
+}
