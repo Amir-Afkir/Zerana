@@ -17,6 +17,8 @@ self.onmessage = async ({data}) => {
   try {
     if(!['synthetic','mapbox'].includes(job.source) || !['flat','waves'].includes(job.profile) ||
       ![16,32].includes(job.subdivisions)) throw new Error('INVALID_STREAM_JOB');
+    if(job.source==='mapbox' && (!Number.isSafeInteger(job.httpGrant) || job.httpGrant<0 || job.httpGrant>256))
+      throw new Error('STREAM_HTTP_BUDGET');
     disk ||= new IndexedPacketCache(job.persistent===true);
     let bundle=await disk.get(job),cacheHit=!!bundle;
     if(!bundle) {

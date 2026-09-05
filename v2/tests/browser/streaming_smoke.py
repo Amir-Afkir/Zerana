@@ -57,6 +57,7 @@ async def run(url):
             expected=os.getenv('ZERANA_EXPECTED_SHA')
             if expected:assert await page.evaluate('window.__ZERANA_TERRAIN_DEBUG__.buildSha')==expected
             assert not provider_paths and not workers
+            assert not await page.locator('#stream-network-option').is_visible()
             assert not (await page.evaluate('window.__ZERANA_STREAM_DEBUG__'))['active']
             report['checks'].append('static-default-no-worker-no-provider')
             # A compact metre-defined window makes cell crossings observable quickly.
@@ -138,6 +139,30 @@ async def run(url):
             assert result['kind']=='error' and result['code']=='STREAM_HTTP_BUDGET' and result['attempts']==2,result
             assert len(provider_paths)-count_before==2
             report['checks'].append('actual-worker-enforces-two-attempt-network-grant')
+            # A malformed grant must fail before network access too.
+            count_before=len(provider_paths)
+            result=await page.evaluate('''url => new Promise((resolve,reject)=>{
+              const w=new Worker(url,{type:'module'});const timer=setTimeout(()=>{w.terminate();reject(Error('worker timeout'));},15000);
+              w.onmessage=e=>{clearTimeout(timer);w.terminate();resolve(e.data);};
+              w.onerror=()=>{clearTimeout(timer);w.terminate();reject(Error('worker error'));};
+              w.postMessage({kind:'build',ticket:{key:'bad-quota',revision:1000},job:{source:'mapbox',profile:'flat',
+                id:{scheme:'web-mercator',level:19,x:265566,y:180362},subdivisions:32,allowPreview:true,
+                token:'pk.streaming-fixture',httpGrant:null,persistent:false}});
+            })''',worker_url)
+            assert result['kind']=='error' and result['code']=='STREAM_HTTP_BUDGET' and result['attempts']==0
+            assert len(provider_paths)==count_before
+            report['checks'].append('malformed-worker-quota-rejected-before-network')
+            # A provider failure must preserve the last safe patch, not erase it.
+            await page.click('#build');await page.wait_for_function('!document.getElementById("build").disabled',timeout=30000)
+            stable_ids=await page.evaluate('window.__ZERANA_TERRAIN_DEBUG__.geometryIds')
+            state['auth']=True
+            await page.check('#stream-network-consent');await page.click('#stream-toggle')
+            await page.wait_for_function('window.__ZERANA_STREAM_DEBUG__.error === "PROVIDER_AUTH"',timeout=30000)
+            assert not await page.evaluate('window.__ZERANA_STREAM_DEBUG__.active')
+            assert stable_ids==await page.evaluate('window.__ZERANA_TERRAIN_DEBUG__.geometryIds')
+            assert await page.evaluate('window.__ZERANA_PLAYER_DEBUG__.available')
+            state['auth']=False
+            report['checks'].append('streaming-auth-failure-stops-and-preserves-loaded-terrain')
             # Pending background calls are not allowed to replace geometry after stop.
             if await page.evaluate('window.__ZERANA_STREAM_DEBUG__.active'):await page.click('#stream-toggle')
             old=await page.evaluate('window.__ZERANA_TERRAIN_DEBUG__.geometryIds');await page.wait_for_timeout(500)

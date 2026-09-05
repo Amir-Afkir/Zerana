@@ -106,7 +106,7 @@ try{
   streamSession=new StreamSession(view,playerSession,(next,attributions)=>{
     packets=next;if(attributions?.length)attribution(attributions);refreshMetrics();
   });
-  $('source-mode').addEventListener('change',()=>{$('provider-options').hidden=$('source-mode').value!=='mapbox';loadController?.abort();});
+  $('source-mode').addEventListener('change',()=>{streamSession.stop();$('provider-options').hidden=$('source-mode').value!=='mapbox';loadController?.abort();});
   $('cancel-load').addEventListener('click',()=>loadController?.abort());
   $('controls').addEventListener('submit',event=>{event.preventDefault();void build();});
   $('place').addEventListener('change',()=>{
