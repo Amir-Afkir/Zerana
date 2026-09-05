@@ -14,16 +14,17 @@ import { TerrainSampler } from '../src/generation/terrain/terrain-sampler.ts';
 import { buildTerrainCell } from '../src/generation/terrain/terrain-builder.ts';
 import { measureTerrainSeams } from '../src/debug/seam-metrics.ts';
 import { TerrainView } from './render/terrain-view.mjs';
+import { StreamSession } from './streaming/stream-session.mjs';
 import { PlayerSession } from './runtime/player-session.mjs';
 
 const $ = id => document.getElementById(id);
 const siteToken = String(import.meta.env.VITE_MAPBOX_API_KEY || '').trim();
 const buildSha = String(import.meta.env.VITE_BUILD_SHA || 'local');
 const places = { paris:[2.35,48.86],equator:[0,0],tanger:[-5.81,35.76],tokyo:[139.69,35.68],antimeridian:[179.99999,35],north:[0,85] };
-let view, playerSession, packets=[], world, revision=0, rebases=0, sourceId='', cacheSize=0, busy=false, loadController=null, requestRevision=0, providerReport=null;
+let view, playerSession, streamSession, packets=[], world, revision=0, rebases=0, sourceId='', cacheSize=0, busy=false, loadController=null, requestRevision=0, providerReport=null;
 function status(message,error=false){$('status').textContent=message;$('status').classList.toggle('error',error);}
 function refreshMetrics(){
-  const seams=measureTerrainSeams(packets,world), snapshot=view.snapshot();
+  const seams=measureTerrainSeams(packets,world,{allowSourceSnapshots:true}), snapshot=view.snapshot();
   const rows=[['Cellules',packets.length],['Source',providerReport?'Mapbox / aperçu':sourceId],['Altitude',providerReport?'Datum non résolu — aperçu uniquement':'Ellipsoïdale synthétique'],['Zoom DEM / image',providerReport?`${providerReport.elevationZoom} / ${providerReport.imageryZoom}`:'—'],['Sommets',packets.reduce((n,c)=>n+c.positions.length/3,0)],
     ['Bords comparés',seams.edgePairs],['Écart CPU / m',(seams.maxGapMeters).toExponential(2)],
     ['Estimation Float32 / m',seams.estimatedFloat32GapMeters.toExponential(2)],['Clés différentes',seams.mismatchedKeys],
@@ -60,21 +61,26 @@ async function build(){
   await new Promise(requestAnimationFrame);
   try{
     const position=geodeticDegrees(degrees(Number($('longitude').value)),degrees(Number($('latitude').value)),meters(0));
-    const subdivisions=Number($('subdivisions').value),ids=terrainPatchCells(position,Number($('level').value),Number($('side').value));
-    const result=isMapbox?await loadMapboxPatch({cells:ids,subdivisions,token:resolveMapboxToken($('mapbox-token').value,siteToken),
-      allowPreview:$('allow-preview').checked,signal:controller.signal,
+    const subdivisions=Number($('subdivisions').value),level=Number($('level').value),profile=$('profile').value;
+    const allowPreview=isMapbox && $('allow-preview').checked,token=isMapbox?resolveMapboxToken($('mapbox-token').value,siteToken):'';
+    const ids=terrainPatchCells(position,level,Number($('side').value));
+    const result=isMapbox?await loadMapboxPatch({cells:ids,subdivisions,token,
+      allowPreview,signal:controller.signal,
       onProgress:(n,total)=>{if(request===requestRevision)status(`Tuiles reçues : ${n}/${total}`);}}):null;
     if(controller.signal.aborted||request!==requestRevision)return;
-    const source=result?.source||syntheticElevation($('profile').value);
+    const source=result?.source||syntheticElevation(profile);
     const sampler=new TerrainSampler(source,undefined,{allowUnresolvedDatumPreview:isMapbox});
     // Bounded static diagnostic generation, not an interactive streaming implementation.
     const next=ids.map(id=>buildTerrainCell(id,sampler,subdivisions));
     const markerPosition=geodeticRadians(position.longitudeRad,position.latitudeRad,source.heightAt(position));
     const nextWorld=createGeoAnchor(markerPosition);
     if(controller.signal.aborted||request!==requestRevision)return;
+    streamSession?.stop();
     view.setPatch(next,nextWorld,geodeticToEcef(markerPosition),result?.textures);
     packets=next;world=nextWorld;
-    playerSession.install(next,nextWorld,geodeticToEcef(markerPosition),isMapbox && $('allow-preview').checked);
+    playerSession.install(next,nextWorld,geodeticToEcef(markerPosition),allowPreview);
+    streamSession.install(next,result?.textures,{source:isMapbox?'mapbox':'synthetic',profile,
+      level,subdivisions,allowPreview,token});
     sourceId=source.id;cacheSize=sampler.size;sampler.clear();
     providerReport=result?{snapshotId:result.snapshotId,elevationZoom:result.elevationZoom,imageryZoom:result.imageryZoom,
       requestCount:result.requestCount,waterFallbackCount:result.waterFallbackCount,evidence:result.evidence,
@@ -97,6 +103,9 @@ try{
   playerSession=new PlayerSession(view,next=>{
     view.rebase(next);world=next;rebases++;playerSession.rebase(next);refreshMetrics();
   });
+  streamSession=new StreamSession(view,playerSession,(next,attributions)=>{
+    packets=next;if(attributions?.length)attribution(attributions);refreshMetrics();
+  });
   $('source-mode').addEventListener('change',()=>{$('provider-options').hidden=$('source-mode').value!=='mapbox';loadController?.abort();});
   $('cancel-load').addEventListener('click',()=>loadController?.abort());
   $('controls').addEventListener('submit',event=>{event.preventDefault();void build();});
@@ -111,6 +120,6 @@ try{
     const next=createGeoAnchor(ecefToGeodetic(threeLocalToEcef([512,0,0],world)));
     view.rebase(next);world=next;rebases++;playerSession.rebase(next);view.render();refreshMetrics();
   });
-  window.addEventListener('pagehide',()=>{loadController?.abort();playerSession.dispose();view.dispose();},{once:true});
+  window.addEventListener('pagehide',()=>{loadController?.abort();streamSession.dispose();playerSession.dispose();view.dispose();},{once:true});
   void build();
 }catch(error){status(`Initialisation WebGL impossible : ${error.message}`,true);}

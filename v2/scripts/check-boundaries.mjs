@@ -9,6 +9,7 @@ const allowed = {
   debug: new Set(['geo', 'generation', 'world', 'debug']),
   physics: new Set(['geo', 'generation', 'physics']),
   runtime: new Set(['geo', 'physics', 'runtime']),
+  streaming: new Set(['geo', 'streaming']),
 };
 const errors = [];
 function inspect(directory) {

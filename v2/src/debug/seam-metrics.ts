@@ -27,11 +27,12 @@ export function estimatedFloat32Point(p: Vec3, t: LocalFrameTransform): Vec3 {
   return vector(row(0), row(3), row(6));
 }
 
-export function measureTerrainSeams(cells: readonly TerrainCellPacket[], world: GeoAnchor): SeamMetrics {
+export function measureTerrainSeams(cells: readonly TerrainCellPacket[], world: GeoAnchor, options: {allowSourceSnapshots?:boolean} = {}): SeamMetrics {
   const keys = new Map(cells.map(c => [`${c.id.level}/${c.id.x}/${c.id.y}`, c]));
   if (keys.size !== cells.length) throw new RangeError('Duplicate cells in patch');
   if (cells.some(c => c.id.level !== cells[0]?.id.level || c.subdivisions !== cells[0]?.subdivisions ||
-      c.sourceId !== cells[0]?.sourceId)) throw new RangeError('Seam diagnostic requires one source and equal LOD');
+      (!options.allowSourceSnapshots && c.sourceId !== cells[0]?.sourceId) ||
+      c.altitudeAuthority !== cells[0]?.altitudeAuthority || c.verticalReference !== cells[0]?.verticalReference)) throw new RangeError('Seam diagnostic requires one source and equal LOD');
   let edgePairs = 0, comparedVertices = 0, mismatchedKeys = 0;
   let maxGapMeters = 0, maxNormalDelta = 0, estimatedFloat32GapMeters = 0;
   for (const a of cells) {
