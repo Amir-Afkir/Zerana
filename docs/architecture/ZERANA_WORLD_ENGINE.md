@@ -240,7 +240,7 @@ Interdictions :
 | ENU | Repère tangent local East, North, Up |
 | Origine flottante | Recentrage périodique du repère de rendu |
 | Cellule | Unité Zerana de streaming et de génération |
-| Tile fournisseur | Bloc de stockage d’une source |
+| Tile fournisseur | Bloc de stockage d’un fournisseur raster ou vectoriel |
 | DEM | Modèle numérique d’élévation |
 | LOD | Niveau de détail |
 | SSE | Erreur projetée à l’écran en pixels |
