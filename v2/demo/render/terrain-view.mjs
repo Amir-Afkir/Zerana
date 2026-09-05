@@ -153,8 +153,8 @@ export class TerrainView{
   }
   dispose(){
     if(this.disposed)return;this.disposed=true;cancelAnimationFrame(this.frame);
-    this.observer.disconnect();this.controls.dispose();this.clearPatch();this.renderer.dispose();
+    this.observer.disconnect();this.controls.dispose();
     this.renderer.domElement.removeEventListener('webglcontextlost',this.contextLost);
-    this.renderer.domElement.remove();
+    this.clearPatch();this.renderer.dispose();this.renderer.forceContextLoss();this.renderer.domElement.remove();
   }
 }

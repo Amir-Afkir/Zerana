@@ -6,6 +6,7 @@ import asyncio
 import functools
 import http.server
 import json
+import math
 import os
 from pathlib import Path
 import shutil
@@ -25,6 +26,21 @@ def png(rgb):
     row = b'\0' + bytes(rgb) * 256
     return (b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', 256, 256, 8, 2, 0, 0, 0))
             + chunk(b'IDAT', zlib.compress(row * 256)) + chunk(b'IEND', b''))
+
+def expected_ecef(height):
+    # Independent analytic fixture for the fixed Paris test location.
+    phi, lam = math.radians(48.86), math.radians(2.35)
+    a, f = 6378137.0, 1 / 298.257223563
+    e2 = f * (2 - f)
+    n = a / math.sqrt(1 - e2 * math.sin(phi) ** 2)
+    return ((n + height) * math.cos(phi) * math.cos(lam),
+            (n + height) * math.cos(phi) * math.sin(lam),
+            (n * (1 - e2) + height) * math.sin(phi))
+
+def assert_marker_height(snapshot, height):
+    marker = snapshot['markerEcef']
+    actual = (marker['xMeters'], marker['yMeters'], marker['zMeters'])
+    assert math.dist(actual, expected_ecef(height)) < 0.001, 'Native image decoding changed numeric elevation'
 
 class QuietHandler(http.server.SimpleHTTPRequestHandler):
     def log_message(self, *args):
@@ -101,6 +117,7 @@ async def run(base_url):
         before, snap = await load()
         assert snap['revision'] > before, await page.inner_text('#status')
         assert snap['cellCount'] == snap['texturedCells'] == 9
+        assert_marker_height(snap, 407.2)
         assert snap['altitudeAuthority'] == 'preview-only'
         assert snap['providerReport']['verticalReference'] == 'UNRESOLVED_DATUM_PREVIEW'
         assert snap['providerReport']['elevationZoom'] == 15 and snap['providerReport']['imageryZoom'] == 17
@@ -122,6 +139,7 @@ async def run(base_url):
         before, water = await load('water')
         assert water['revision'] > before and water['providerReport']['waterFallbackCount'] > 0
         assert water['altitudeAuthority'] == 'preview-only'
+        assert_marker_height(water, 0.0)
         report['scenarios'].append('documented-water-404-only-explicit-fallback')
         state['retried'] = False
         before, retry = await load('retry')
