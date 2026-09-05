@@ -1,0 +1,20 @@
+name: Stage 9 baseline export
+on:
+  push:
+    branches: [work/stage9-source-snapshot]
+permissions:
+  contents: read
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - run: git archive --format=tar 7596bea3890225c3ab499c8d24501f6b19c84be7 -o source.tar
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stage9-baseline-source
+          path: source.tar
+          retention-days: 1
