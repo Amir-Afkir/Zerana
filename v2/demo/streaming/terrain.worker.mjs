@@ -44,3 +44,4 @@ self.onmessage = async ({data}) => {
       message.includes('404')?'PROVIDER_NOT_FOUND':'STREAM_GENERATION_ERROR';
     self.postMessage({kind:'error',ticket,code,attempts});
   } finally {current=null;}
+};
