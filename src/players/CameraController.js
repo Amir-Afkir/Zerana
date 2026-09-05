@@ -3,29 +3,30 @@ import * as THREE from 'three';
 import { CHUNK_SIZE } from '../utils/constants.js';
 
 export default class CameraController {
-  
-  constructor(domElement) {
-    this.domElement = domElement;
 
-    // Angle initial de vue orbitale
+  constructor(domElement, chunkSize = CHUNK_SIZE) {
+    this.domElement = domElement;
+    this.chunkSize = chunkSize;
+
     this.azimuth = Math.PI;
     this.elevation = Math.PI / 4;
 
-    // Distance de la caméra (proportionnelle au chunk)
-    this.baseDistance = CHUNK_SIZE * 0.03;
+    this.baseDistance = this.chunkSize * 0.03;
     this.distance = this.baseDistance;
 
-    // Décalage de la cible (caméra vise la tête/torse du joueur)
-    this.targetOffset = new THREE.Vector3(0, CHUNK_SIZE * 0.017, 0); // ≈ 1.7 m
+    this.targetOffset = new THREE.Vector3(0, this.chunkSize * 0.017, 0);
 
     this.camera = new THREE.PerspectiveCamera(
       75,
       window.innerWidth / window.innerHeight,
-      CHUNK_SIZE * .01,     // plus petit plan proche
-      CHUNK_SIZE * 10000 // ou 1000 selon l'échelle réelle de ton monde
+      Math.max(0.01, this.chunkSize * 0.001),
+      this.chunkSize * 10000
     );
 
-    // Contrôle souris
+    this.initInputHandlers();
+  }
+
+  initInputHandlers() {
     document.addEventListener('mousemove', (e) => {
       if (document.pointerLockElement !== this.domElement) return;
       this.azimuth -= e.movementX * 0.002;
@@ -33,15 +34,17 @@ export default class CameraController {
       this.elevation = Math.max(0.1, Math.min(Math.PI / 2.2, this.elevation));
     });
 
-    // Clique pour activer le pointer lock
     this.domElement.addEventListener('click', () => {
       this.domElement.requestPointerLock();
     });
 
-    // Molette pour zoom (indexé aussi au CHUNK_SIZE)
     this.domElement.addEventListener('wheel', (event) => {
-      const zoomDelta = (CHUNK_SIZE * 0.01) * (event.deltaY > 0 ? 1 : -1);
-      this.distance = THREE.MathUtils.clamp(this.distance + zoomDelta, this.baseDistance, CHUNK_SIZE * 1.5);
+      const zoomDelta = (this.chunkSize * 0.01) * (event.deltaY > 0 ? 1 : -1);
+      this.distance = THREE.MathUtils.clamp(
+        this.distance + zoomDelta,
+        this.baseDistance,
+        this.chunkSize * 1.5
+      );
     }, { passive: true });
   }
 
@@ -67,4 +70,9 @@ export default class CameraController {
     this.update(target);
   }
 
+  adjustCameraDistance(scale) {
+    const baseDistance = 180 * scale;
+    this.baseDistance = THREE.MathUtils.clamp(baseDistance, 0.5, 30);
+    this.distance = this.baseDistance;
+  }
 }

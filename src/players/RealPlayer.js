@@ -1,30 +1,59 @@
 // RealPlayer.js
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader';
-import { CHUNK_SIZE } from '../utils/constants.js';
-
-const DEFAULT_MODEL_URL = `${import.meta.env.BASE_URL}models/DefaultAvatarPC.glb`;
-
 export default class RealPlayer {
-  constructor(scene, onLoaded, modelUrl = DEFAULT_MODEL_URL, globeManager = null) {
+  constructor(scene, onLoaded, modelUrl = '/models/DefaultAvatarPC.glb', globeManager = null, cameraController = null, latitude = null, zoom = 17, chunkSize = null) {
     this.loader = new GLTFLoader();
     this.model = null;
     this.modelUrl = modelUrl;
     this.globeManager = globeManager;
+    this.cameraController = cameraController;
+    this.currentLatitude = latitude;
+    this.zoom = zoom;
+    this.chunkSize = chunkSize;
+    this.baseHeight = null;
 
     this.loader.load(modelUrl, (gltf) => {
       this.model = gltf.scene;
-      this.setScaleFromChunk(CHUNK_SIZE);
+      // Suppression de l'appel anticipé à setScaleFromChunk ici : l'échelle sera appliquée plus tard quand la latitude sera connue.
       scene.add(this.model);
+
+      // Cache a reference height so scaling stays stable across calls.
+      const box = new THREE.Box3().setFromObject(this.model);
+      const size = new THREE.Vector3();
+      box.getSize(size);
+      this.baseHeight = size.y || 1;
 
       if (onLoaded) onLoaded(this);
     });
   }
 
-  setScaleFromChunk(chunkSize) {
-    const scale = chunkSize / 100;
-    if (this.model) {
-      this.model.scale.setScalar(scale);
+  setScaleFromChunk(chunkSize, latitude, zoom = 17, cameraController = null) {
+    if (typeof latitude !== 'number' || isNaN(latitude)) {
+      if (this.model) {
+        console.warn('[Zerana] Latitude invalide, échelle ignorée');
+      }
+      return;
+    }
+
+    this.currentLatitude = latitude;
+    this.zoom = zoom;
+    this.cameraController = cameraController;
+
+    const earthCircum = 40075017;
+    const tileSizeMeters = (earthCircum * Math.cos(latitude * Math.PI / 180)) / Math.pow(2, zoom);
+    const unitsPerMeter = chunkSize / tileSizeMeters;
+
+    // Target a ~human scale, regardless of the GLB unit system.
+    const desiredHeightMeters = 1.75;
+    const targetHeightUnits = desiredHeightMeters * unitsPerMeter;
+    const baseHeight = this.baseHeight || 1;
+    const scale = targetHeightUnits / baseHeight;
+
+    if (this.model) this.model.scale.setScalar(scale);
+
+    if (cameraController?.adjustCameraDistance) {
+      cameraController.adjustCameraDistance(scale);
     }
   }
 
@@ -50,12 +79,14 @@ export default class RealPlayer {
 
     this.loader.load(modelUrl, (gltf) => {
       this.model = gltf.scene;
-      this.setScaleFromChunk(CHUNK_SIZE);
+      if (typeof this.currentLatitude === 'number' && !isNaN(this.currentLatitude)) {
+        const size = this.chunkSize || 1;
+        this.setScaleFromChunk(size, this.currentLatitude, this.zoom, this.cameraController);
+      }
       this.model.position.copy(prevPos);
 
-      // 🔁 Recalcule automatiquement la hauteur si globeManager est fourni
       if (globeManager) {
-        const y = globeManager.getHeightAt(prevPos.x, prevPos.z);
+        const y = globeManager.getHeightAt(prevPos);
         if (!isNaN(y)) {
           this.model.position.y = y;
         }

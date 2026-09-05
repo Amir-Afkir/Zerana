@@ -1,13 +1,13 @@
 // src/utils/constants.js
 
 // Taille d’un chunk (en unités jeu, ex: mètres)
-export const CHUNK_SIZE = 100; // Adapte à la réalité de ta map (100 recommandé)
+export const CHUNK_SIZE = 100; // En pratique: ~taille "tuile" en units monde (100 est un bon default)
 
 // Nombre de chunks chargés autour du joueur (radius : 5 → 11x11 chunks)
 export const GRID_SIZE = 5;
 
 // Niveau de zoom pour Mapbox (impacte la taille réelle d’un chunk sur la planète)
-export const ZOOM_LEVEL = 17; 
+export const ZOOM_LEVEL = 19; 
 
 // API key Mapbox depuis .env (sécurisé)
 export const MAPBOX_API_KEY = import.meta.env.VITE_MAPBOX_API_KEY;

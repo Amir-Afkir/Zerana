@@ -1,6 +1,6 @@
-// src/core/PlayerController.js
+// src/players/PlayerController.js
 import * as THREE from 'three';
-import EventBus from '../core/EventBus.js';
+import eventBus from '../stores/eventBus.js';
 
 export default class PlayerController {
   constructor(player, chunkManager, options = {}) {
@@ -27,7 +27,7 @@ export default class PlayerController {
   }
 
   initEventListeners() {
-    EventBus.on('keyDown', (key) => {
+    eventBus.on('keyDown', (key) => {
       switch (key) {
         case 'KeyW': this.moveForward = true; break;
         case 'KeyS': this.moveBackward = true; break;
@@ -37,7 +37,7 @@ export default class PlayerController {
       }
     });
 
-    EventBus.on('keyUp', (key) => {
+    eventBus.on('keyUp', (key) => {
       switch (key) {
         case 'KeyW': this.moveForward = false; break;
         case 'KeyS': this.moveBackward = false; break;
@@ -46,7 +46,7 @@ export default class PlayerController {
       }
     });
 
-    EventBus.on('player:weaponChanged', (hasPistol) => {
+    eventBus.on('player:weaponChanged', (hasPistol) => {
       this.hasPistol = hasPistol;
       if (this.cameraController) {
         this.cameraController.isTransitioning = true;
@@ -59,16 +59,19 @@ export default class PlayerController {
     if (!this.hasPistol) return;
     if (this.animations?.fireGun) this.animations.fireGun();
 
-    if (this.cameraController) {
+    if (this.cameraController?.applyRecoil) {
       this.cameraController.applyRecoil(0.7, 100);
-    } else if (this.camera) {
-      const recoil = new THREE.Vector3(0, 0, -0.5);
-      this.camera.position.add(recoil);
-      setTimeout(() => this.camera.position.sub(recoil), 100);
     }
   }
 
   update(dt) {
+    if (!this.player?.model) return;
+    this.handleMovementInput(dt);
+    this.updateHeight();
+    this.updateAnimations();
+  }
+
+  handleMovementInput(dt) {
     if (this.moveForward) {
       const now = Date.now();
       if (this.doubleTapKey === 'KeyW' && (now - this.lastTapTime < 300)) {
@@ -89,22 +92,27 @@ export default class PlayerController {
     if (this.moveLeft) direction.x -= 1;
     if (this.moveRight) direction.x += 1;
 
-    if (direction.length() > 0) {
-      direction.normalize();
+    if (direction.length() === 0) return;
+    direction.normalize();
 
-      const angle = this.player.model.rotation.y;
-      const sin = Math.sin(angle), cos = Math.cos(angle);
-      const dx = direction.x * cos - direction.z * sin;
-      const dz = direction.x * sin + direction.z * cos;
+    const angle = this.player.model.rotation.y;
+    const sin = Math.sin(angle), cos = Math.cos(angle);
+    const dx = direction.x * cos - direction.z * sin;
+    const dz = direction.x * sin + direction.z * cos;
 
-      this.player.model.position.x += dx * this.speed * dt;
-      this.player.model.position.z += dz * this.speed * dt;
+    this.player.model.position.x += dx * this.speed * dt;
+    this.player.model.position.z += dz * this.speed * dt;
+  }
+
+  updateHeight() {
+    if (this.chunkManager?.getHeightAt && this.player?.model) {
+      const pos = this.player.model.position;
+      const height = this.chunkManager.getHeightAt(pos);
+      if (!isNaN(height)) pos.y = height;
     }
+  }
 
-    if (this.chunkManager?.getHeightAt) {
-      this.player.model.position.y = this.chunkManager.getHeightAt(this.player.model.position.x, this.player.model.position.z);
-    }
-
+  updateAnimations() {
     if (this.animations?.setDirection) {
       this.animations.setDirection(
         this.moveLeft ? -1 : this.moveRight ? 1 : 0,
