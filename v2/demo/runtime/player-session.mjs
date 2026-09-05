@@ -159,6 +159,9 @@ export class PlayerSession {
     if (!this.player) { window.__ZERANA_PLAYER_DEBUG__ = { available: false, active: false }; return; }
     const state = this.player.state;
     this.root.updateMatrixWorld(true);
+    // lookAt changes orientation after updating world matrices; diagnostics may run
+    // before the next render. Synchronize the camera inverse before projecting.
+    this.view.camera.updateMatrixWorld(true);
     const transformScale = new THREE.Vector3().setFromMatrixScale(this.root.matrixWorld);
     const ndc = new THREE.Vector3(...ecefToThreeLocal(state.ecefPosition, this.player.frame)).project(this.view.camera).toArray();
     window.__ZERANA_PLAYER_DEBUG__ = { available: true, active: this.active, runtimeError: this.runtimeError,

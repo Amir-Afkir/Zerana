@@ -118,9 +118,13 @@ async def run(url):
             for _ in range(4):
                 await page.click('#rebase')
             after = await snapshot()
+            report['beforeRebase'] = before
+            report['afterRebase'] = after
+            await page.screenshot(path=str(OUTPUT / 'player-after-rebase.png'))
             assert xyz(before) == xyz(after)
             assert before['state']['velocityEcefMetersPerSecond'] == after['state']['velocityEcefMetersPerSecond']
             assert math.dist(before['footNdc'], after['footNdc']) < 1e-6
+            assert math.dist(list(before['cameraEcef'].values()), list(after['cameraEcef'].values())) < 1e-6
             assert before['geometryId'] == after['geometryId']
             assert geometry_ids == await page.evaluate('window.__ZERANA_TERRAIN_DEBUG__.geometryIds')
             assert after['triangleCount'] == before['triangleCount']
@@ -149,10 +153,10 @@ async def run(url):
             await page.click('#player-toggle')
             await page.keyboard.down('ArrowRight')
             await steps(140)
-            await page.keyboard.up('ArrowRight')
             boundary = await snapshot()
             assert boundary['state']['boundaryBlocked'] and boundary['state']['grounded']
             assert boundary['runtimeError'] is None
+            await page.keyboard.up('ArrowRight')
             report['scenarios'].append('loaded-patch-boundary-prevents-void-fall')
             await page.keyboard.press('Escape')
             for _ in range(3):
