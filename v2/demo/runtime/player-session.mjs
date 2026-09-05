@@ -115,6 +115,7 @@ export class PlayerSession {
     if (!this.player || this.loading) return;
     this.pause();
     try {
+      this.beforeRespawn?.();
       this.player = new MetricPlayer(this.origin, this.player.frame, this.physics);
       this.start();
     } catch (error) { this.runtimeError = error.message; this.$('player-status').textContent = error.message; }
@@ -167,7 +168,7 @@ export class PlayerSession {
     window.__ZERANA_PLAYER_DEBUG__ = { available: true, active: this.active, runtimeError: this.runtimeError,
       state, steps: this.clock.steps, droppedSeconds: this.clock.droppedSeconds, rebases: this.rebases,
       heightMeters: PLAYER.heightMeters, radiusMeters: PLAYER.radiusMeters, scale: transformScale.toArray(),
-      colliderCount: this.physics.colliderCount, triangleCount: this.physics.triangleCount,
+      colliderCount: this.physics.colliderCount, activeColliderCount: this.physics.activeColliderCount, bvhBuildCount: this.physics.bvhBuildCount, triangleCount: this.physics.triangleCount,
       altitudeAuthority: this.physics.altitudeAuthority, footNdc: ndc,
       cameraEcef: threeLocalToEcef(this.view.camera.position.toArray(), this.player.frame), geometryId: this.geometry.uuid };
     const now = performance.now();
