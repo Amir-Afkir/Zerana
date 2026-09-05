@@ -7,6 +7,8 @@ const allowed = {
   providers: new Set(['geo', 'generation', 'providers']),
   world: new Set(['geo', 'generation', 'world']),
   debug: new Set(['geo', 'generation', 'world', 'debug']),
+  physics: new Set(['geo', 'generation', 'physics']),
+  runtime: new Set(['geo', 'physics', 'runtime']),
 };
 const errors = [];
 function inspect(directory) {
@@ -33,4 +35,4 @@ function inspect(directory) {
 }
 inspect(root);
 if (errors.length) throw new Error(errors.join('\n'));
-console.log('CPU boundaries OK. Browser/network adapters remain in demo/providers.');
+console.log('CPU boundaries OK. Browser/network adapters remain outside CPU domains.');

@@ -53,8 +53,14 @@ export class TerrainView{
     this.observer=new ResizeObserver(this.resize);this.observer.observe(container);this.resize();
     this.contextLost=event=>{event.preventDefault();onError('Contexte WebGL perdu. Recharge la page pour reconstruire la démo.');};
     this.renderer.domElement.addEventListener('webglcontextlost',this.contextLost);
-    this.animate=()=>{if(this.disposed)return;this.controls.update();this.render();this.frame=requestAnimationFrame(this.animate);};
-    this.animate();
+    this.animate=now=>{
+      if(this.disposed)return;
+      const dt=this.previousTime===undefined?0:Math.max(0,(now-this.previousTime)/1000);this.previousTime=now;
+      this.onFrame?.(dt);
+      if(this.controls.enabled)this.controls.update();
+      this.render();this.frame=requestAnimationFrame(this.animate);
+    };
+    this.animate(performance.now());
   }
   own(resource){this.resources.add(resource);return resource;}
   clearPatch(){
@@ -137,7 +143,7 @@ export class TerrainView{
     this.world=next;
     for(const cell of this.cellViews)applyFrame(cell.root,frameTransform(cell.packet.anchor,next));
     applyFrame(this.markerRoot,frameTransform(this.markerAnchor,next));
-    this.controls.update();this.scene.updateMatrixWorld(true);
+    if(this.controls.enabled)this.controls.update();this.scene.updateMatrixWorld(true);
   }
   render(){if(!this.disposed)this.renderer.render(this.scene,this.camera);}
   snapshot(){

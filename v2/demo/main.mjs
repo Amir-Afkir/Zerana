@@ -14,12 +14,13 @@ import { TerrainSampler } from '../src/generation/terrain/terrain-sampler.ts';
 import { buildTerrainCell } from '../src/generation/terrain/terrain-builder.ts';
 import { measureTerrainSeams } from '../src/debug/seam-metrics.ts';
 import { TerrainView } from './render/terrain-view.mjs';
+import { PlayerSession } from './runtime/player-session.mjs';
 
 const $ = id => document.getElementById(id);
 const siteToken = String(import.meta.env.VITE_MAPBOX_API_KEY || '').trim();
 const buildSha = String(import.meta.env.VITE_BUILD_SHA || 'local');
 const places = { paris:[2.35,48.86],equator:[0,0],tanger:[-5.81,35.76],tokyo:[139.69,35.68],antimeridian:[179.99999,35],north:[0,85] };
-let view, packets=[], world, revision=0, rebases=0, sourceId='', cacheSize=0, busy=false, loadController=null, requestRevision=0, providerReport=null;
+let view, playerSession, packets=[], world, revision=0, rebases=0, sourceId='', cacheSize=0, busy=false, loadController=null, requestRevision=0, providerReport=null;
 function status(message,error=false){$('status').textContent=message;$('status').classList.toggle('error',error);}
 function refreshMetrics(){
   const seams=measureTerrainSeams(packets,world), snapshot=view.snapshot();
@@ -50,6 +51,7 @@ function attribution(values){
   }
 }
 async function build(){
+  playerSession?.setLoading(true);
   loadController?.abort();
   const request=++requestRevision,controller=new AbortController();loadController=controller;
   const isMapbox=$('source-mode').value==='mapbox';
@@ -71,7 +73,9 @@ async function build(){
     const nextWorld=createGeoAnchor(markerPosition);
     if(controller.signal.aborted||request!==requestRevision)return;
     view.setPatch(next,nextWorld,geodeticToEcef(markerPosition),result?.textures);
-    packets=next;world=nextWorld;sourceId=source.id;cacheSize=sampler.size;sampler.clear();
+    packets=next;world=nextWorld;
+    playerSession.install(next,nextWorld,geodeticToEcef(markerPosition),isMapbox && $('allow-preview').checked);
+    sourceId=source.id;cacheSize=sampler.size;sampler.clear();
     providerReport=result?{snapshotId:result.snapshotId,elevationZoom:result.elevationZoom,imageryZoom:result.imageryZoom,
       requestCount:result.requestCount,waterFallbackCount:result.waterFallbackCount,evidence:result.evidence,
       verticalReference:source.verticalReference,accuracy:'not-certified'}:null;
@@ -83,13 +87,16 @@ async function build(){
     document.body.dataset.ready=String(revision);
     status(isMapbox?'Satellite et relief reçus. Altitudes source non certifiées WGS84.':'Scène prête. Relief synthétique, aucun fournisseur externe.');
   }catch(error){if(request===requestRevision)status(error.name==='AbortError'?'Chargement annulé ; scène précédente conservée.':error.message,true);}
-  finally{if(request===requestRevision){busy=false;$('build').disabled=false;$('cancel-load').hidden=true;}}
+  finally{if(request===requestRevision){busy=false;$('build').disabled=false;$('cancel-load').hidden=true;playerSession?.setLoading(false);}}
 }
 
 try{
   $('build-version').textContent=`Préversion · ${buildSha.slice(0,12)}`;
   $('site-token-state').textContent=isPublicMapboxToken(siteToken)?'Token public du site disponible ; laisse ce champ vide pour l’utiliser.':'Aucun token de site configuré ; saisis ton token public.';
   view=new TerrainView($('viewport'),error=>status(error,true));
+  playerSession=new PlayerSession(view,next=>{
+    view.rebase(next);world=next;rebases++;playerSession.rebase(next);refreshMetrics();
+  });
   $('source-mode').addEventListener('change',()=>{$('provider-options').hidden=$('source-mode').value!=='mapbox';loadController?.abort();});
   $('cancel-load').addEventListener('click',()=>loadController?.abort());
   $('controls').addEventListener('submit',event=>{event.preventDefault();void build();});
@@ -97,13 +104,13 @@ try{
     const [lon,lat]=places[$('place').value];$('longitude').value=lon;$('latitude').value=lat;
   });
   for(const name of ['wireframe','normals','metric-grid'])$(name).addEventListener('change',()=>{modes();view.render();refreshMetrics();});
-  $('overview').addEventListener('click',()=>{view.overview();view.render();refreshMetrics();});
-  $('human').addEventListener('click',()=>{view.humanView();view.render();refreshMetrics();});
+  $('overview').addEventListener('click',()=>{playerSession.pause();view.overview();view.render();refreshMetrics();});
+  $('human').addEventListener('click',()=>{playerSession.pause();view.humanView();view.render();refreshMetrics();});
   $('rebase').addEventListener('click',()=>{
     if(!world)return;
     const next=createGeoAnchor(ecefToGeodetic(threeLocalToEcef([512,0,0],world)));
-    view.rebase(next);world=next;rebases++;view.render();refreshMetrics();
+    view.rebase(next);world=next;rebases++;playerSession.rebase(next);view.render();refreshMetrics();
   });
-  window.addEventListener('pagehide',()=>{loadController?.abort();view.dispose();},{once:true});
+  window.addEventListener('pagehide',()=>{loadController?.abort();playerSession.dispose();view.dispose();},{once:true});
   void build();
 }catch(error){status(`Initialisation WebGL impossible : ${error.message}`,true);}

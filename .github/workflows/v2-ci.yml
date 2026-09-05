@@ -98,6 +98,8 @@ jobs:
         env:
           ZERANA_MOCK_MAPBOX: '1'
         run: python v2/tests/browser/preview_smoke.py
+      - name: Test metric player, collision, input and floating origin
+        run: python v2/tests/browser/player_smoke.py
       - name: Retain preview and sanitized browser evidence
         if: always()
         uses: actions/upload-artifact@v4
