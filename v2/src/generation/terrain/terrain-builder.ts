@@ -6,12 +6,14 @@ import type { Vec3 } from '../../geo/linear.js';
 import { ecefToThreeLocal, enuToThree } from '../../geo/three-frame.js';
 import { TERRAIN_LIMITS, validateTerrainGrid } from './lattice.js';
 import { TerrainSampler } from './terrain-sampler.js';
+import type { HeightReference } from './elevation-source.js';
 
 /** Plain data; CPU ownership passes to the renderer. No Three.js, DOM or I/O. */
 export interface TerrainCellPacket {
   readonly id: WorldCellId;
   readonly sourceId: string;
-  readonly verticalReference: 'ELLIPSOIDAL_WGS84';
+  readonly verticalReference: HeightReference;
+  readonly altitudeAuthority: 'ellipsoidal' | 'preview-only';
   readonly anchor: GeoAnchor;
   readonly subdivisions: number;
   readonly positions: Float32Array;
@@ -67,7 +69,8 @@ export function buildTerrainCell(
     }
   }
   return Object.freeze({
-    id: Object.freeze({ ...id }), sourceId: sampler.source.id, verticalReference: 'ELLIPSOIDAL_WGS84',
+    id: Object.freeze({ ...id }), sourceId: sampler.source.id, verticalReference: sampler.source.verticalReference,
+    altitudeAuthority: sampler.source.verticalReference === 'ELLIPSOIDAL_WGS84' ? 'ellipsoidal' : 'preview-only',
     anchor, subdivisions, positions, normals, uvs, indices, heightsMeters,
     sampleKeys: Object.freeze(sampleKeys),
     bounds: Object.freeze({ min: vector(min[0]!, min[1]!, min[2]!), max: vector(max[0]!, max[1]!, max[2]!) }),

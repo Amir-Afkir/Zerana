@@ -11,8 +11,14 @@
     <aside class="panel">
       <p class="eyebrow">ZERANA / WORLD ENGINE V2</p>
       <h1>Laboratoire terrain</h1>
-      <p class="intro">Géographie réelle, relief synthétique. Aucun appel Mapbox. Le jeu publié reste indépendant.</p>
+      <p class="intro">Terrain de validation ou données Mapbox. Les appels réels nécessitent un token public et une action explicite.</p>
       <form id="controls">
+        <label>Source<select id="source-mode"><option value="synthetic">Synthétique — hors ligne</option><option value="mapbox">Mapbox — satellite et relief</option></select></label>
+        <div id="provider-options" hidden>
+          <label>Token Mapbox public (pk.)<input id="mapbox-token" type="password" autocomplete="off" spellcheck="false" placeholder="pk.…" /></label>
+          <label class="consent"><input id="allow-preview" type="checkbox" /> J’accepte un aperçu sans altitude WGS84 certifiée.</label>
+          <p class="footnote">Le datum Mapbox est mixte. Aucune correction géoïde n’est inventée. Token conservé en mémoire seulement. Requêtes pouvant être facturées par Mapbox.</p>
+        </div>
         <label for="place">Point de contrôle</label>
         <select id="place">
           <option value="paris">Paris</option>
@@ -35,6 +41,7 @@
           <label>Subdivisions<select id="subdivisions"><option selected>32</option><option>64</option><option>128</option></select></label>
         </div>
         <button type="submit" id="build">Générer la scène</button>
+      <button type="button" id="cancel-load" hidden>Annuler le chargement</button>
       </form>
       <div class="checks">
         <label><input id="wireframe" type="checkbox" checked /> Maillage</label>
@@ -48,11 +55,16 @@
       </div>
       <p id="status" role="status" aria-live="polite">Initialisation…</p>
       <dl id="metrics"></dl>
-      <p class="footnote">Repère : X Est · Y Haut · Z Sud<br>Hauteurs ellipsoïdales WGS84 · Capsule 1,80 m<br>Souris : orbite, zoom et déplacement</p>
+      <p class="footnote">Repère : X Est · Y Haut · Z Sud<br>Référence verticale affichée dans les diagnostics · Capsule 1,80 m<br>Souris : orbite, zoom et déplacement</p>
     </aside>
     <section id="viewport" aria-label="Vue 3D du terrain">
-      <div class="badge">SYNTHÉTIQUE · 1 UNITÉ = 1 MÈTRE</div>
-      <div class="legend">Coins UV : NO rouge · NE bleu · SO jaune · SE blanc</div>
+      <div class="badge" id="source-badge">SYNTHÉTIQUE · 1 UNITÉ = 1 MÈTRE</div>
+      <div class="legend" id="uv-legend">Coins UV : NO rouge · NE bleu · SO jaune · SE blanc</div>
+    <div id="attribution" hidden>
+        <a class="mapbox-logo" href="https://www.mapbox.com/" target="_blank" rel="noopener noreferrer"><img src="./assets/mapbox-logo.svg" width="88" height="23" alt="Mapbox" /></a>
+        <div id="provider-attribution"></div>
+        <a href="https://apps.mapbox.com/feedback/" target="_blank" rel="noopener noreferrer">Improve this map</a>
+      </div>
     </section>
   </main>
   <script type="module" src="./main.mjs"></script>

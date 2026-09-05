@@ -61,7 +61,7 @@ export class TerrainView{
     this.patchRoot.clear();for(const resource of this.resources)resource.dispose();this.resources.clear();
     this.cellViews=[];this.markerRoot=null;this.grid=null;
   }
-  setPatch(packets,world,markerEcef){
+  setPatch(packets,world,markerEcef,imagery=new Map()){
     this.clearPatch();this.world=world;this.markerEcef=markerEcef;
     this.texture=this.own(checkerTexture());
     this.surfaceMaterial=this.own(new THREE.MeshStandardMaterial({map:this.texture,roughness:1,metalness:0}));
@@ -74,7 +74,17 @@ export class TerrainView{
       geometry.setAttribute('normal',new THREE.BufferAttribute(packet.normals,3));
       geometry.setAttribute('uv',new THREE.BufferAttribute(packet.uvs,2));
       geometry.setIndex(new THREE.BufferAttribute(packet.indices,1));geometry.computeBoundingBox();geometry.computeBoundingSphere();
-      const root=new THREE.Group(),mesh=new THREE.Mesh(geometry,this.surfaceMaterial);
+      let surfaceMaterial=this.surfaceMaterial;
+      const image=imagery.get(`${packet.id.level}/${packet.id.x}/${packet.id.y}`);
+      if(image){
+        const texture=this.own(new THREE.DataTexture(image.rgba,image.width,image.width));
+        texture.colorSpace=THREE.SRGBColorSpace;texture.flipY=false;texture.generateMipmaps=false;
+        texture.minFilter=THREE.LinearFilter;texture.magFilter=THREE.LinearFilter;
+        texture.wrapS=texture.wrapT=THREE.ClampToEdgeWrapping;
+        texture.repeat.setScalar(image.uvScale);texture.offset.setScalar(image.uvOffset);texture.needsUpdate=true;
+        surfaceMaterial=this.own(new THREE.MeshStandardMaterial({map:texture,roughness:1,metalness:0}));
+      }
+      const root=new THREE.Group(),mesh=new THREE.Mesh(geometry,surfaceMaterial);
       const wire=new THREE.LineSegments(this.own(new THREE.WireframeGeometry(geometry)),wireMaterial);
       const border=[];const n=packet.subdivisions,w=n+1;
       const add=i=>border.push(packet.positions[i*3],packet.positions[i*3+1],packet.positions[i*3+2]);
@@ -85,7 +95,7 @@ export class TerrainView{
       const edgeGeometry=this.own(new THREE.BufferGeometry());edgeGeometry.setAttribute('position',new THREE.Float32BufferAttribute(border,3));
       root.add(mesh,wire,new THREE.LineLoop(edgeGeometry,borderMaterial));
       applyFrame(root,frameTransform(packet.anchor,world));this.patchRoot.add(root);
-      this.cellViews.push({packet,root,mesh,wire});
+      this.cellViews.push({packet,root,mesh,wire,surfaceMaterial});
     }
     this.markerAnchor=createGeoAnchor(ecefToGeodetic(markerEcef));this.markerRoot=new THREE.Group();
     const capsule=new THREE.Mesh(this.own(new THREE.CapsuleGeometry(0.25,MARKER_HEIGHT_METERS-0.5,4,12)),
@@ -98,7 +108,7 @@ export class TerrainView{
     this.scene.updateMatrixWorld(true);
   }
   setModes({wireframe,normals,metricGrid}){
-    for(const cell of this.cellViews){cell.wire.visible=wireframe;cell.mesh.material=normals?this.normalMaterial:this.surfaceMaterial;}
+    for(const cell of this.cellViews){cell.wire.visible=wireframe;cell.mesh.material=normals?this.normalMaterial:cell.surfaceMaterial;}
     if(this.grid)this.grid.visible=metricGrid;
   }
   overview(){
@@ -135,15 +145,16 @@ export class TerrainView{
     const marker=this.markerEcef?vector(ecefToThreeLocal(this.markerEcef,this.world)):new THREE.Vector3();
     const projected=marker.clone().project(this.camera);
     return {geometries:this.renderer.info.memory.geometries,textures:this.renderer.info.memory.textures,
-      drawCalls:this.renderer.info.render.calls,markerHeightMeters:MARKER_HEIGHT_METERS,
+      drawCalls:this.renderer.info.render.calls,altitudeAuthority:this.cellViews[0]?.packet.altitudeAuthority,
+      texturedCells:this.cellViews.filter(cell=>cell.surfaceMaterial!==this.surfaceMaterial).length,markerHeightMeters:MARKER_HEIGHT_METERS,
       markerEcef:this.markerEcef,markerNdc:projected.toArray(),
       geometryIds:this.cellViews.map(cell=>cell.mesh.geometry.uuid),
       bufferFirstVertices:this.cellViews.map(cell=>Array.from(cell.packet.positions.slice(0,3)))};
   }
   dispose(){
     if(this.disposed)return;this.disposed=true;cancelAnimationFrame(this.frame);
-    this.observer.disconnect();this.controls.dispose();
+    this.observer.disconnect();this.controls.dispose();this.clearPatch();this.renderer.dispose();
     this.renderer.domElement.removeEventListener('webglcontextlost',this.contextLost);
-    this.clearPatch();this.renderer.dispose();this.renderer.forceContextLoss();this.renderer.domElement.remove();
+    this.renderer.domElement.remove();
   }
 }
