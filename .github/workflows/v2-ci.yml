@@ -1,0 +1,68 @@
+name: Zerana V2 - Geo Kernel CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main, feature/v2-geo-kernel]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: v2-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  geo-kernel:
+    name: Geo kernel - Node ${{ matrix.node }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['22', '24']
+    defaults:
+      run:
+        working-directory: v2
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+          cache-dependency-path: v2/package-lock.json
+      - run: npm ci --ignore-scripts
+      - run: npm run check
+
+  legacy-build:
+    name: Current game - Pages build only
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Compile existing game without production credentials
+        run: npm run build
+        env:
+          VITE_MAPBOX_API_KEY: pk.ci-placeholder-not-a-valid-token
+      - name: Verify Pages asset paths
+        run: |
+          node --input-type=module <<'JS'
+          import { readFileSync, existsSync } from 'node:fs';
+          import assert from 'node:assert/strict';
+          const html = readFileSync('dist/index.html', 'utf8');
+          const paths = [...html.matchAll(/(?:src|href)="([^"]+\.(?:js|css))"/g)].map(m => m[1]);
+          assert(paths.length >= 2, 'Expected JS and CSS assets');
+          for (const path of paths) {
+            assert(path.startsWith('/Zerana/'), `Invalid Pages prefix: ${path}`);
+            assert(existsSync(`dist/${path.slice('/Zerana/'.length)}`), `Missing asset: ${path}`);
+          }
+          const model = readFileSync('dist/models/DefaultAvatarPC.glb');
+          assert.equal(model.subarray(0, 4).toString(), 'glTF');
+          console.log('Current game build and Pages asset paths verified. No deployment performed.');
+          JS
