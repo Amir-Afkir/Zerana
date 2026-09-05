@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="icon" href="data:," />
+  <title>Zerana V2 — Laboratoire terrain</title>
+</head>
+<body>
+  <main class="layout">
+    <aside class="panel">
+      <p class="eyebrow">ZERANA / WORLD ENGINE V2</p>
+      <h1>Laboratoire terrain</h1>
+      <p class="intro">Géographie réelle, relief synthétique. Aucun appel Mapbox. Le jeu publié reste indépendant.</p>
+      <form id="controls">
+        <label for="place">Point de contrôle</label>
+        <select id="place">
+          <option value="paris">Paris</option>
+          <option value="equator">Équateur</option>
+          <option value="tanger">Tanger</option>
+          <option value="tokyo">Tokyo</option>
+          <option value="antimeridian">Antiméridien</option>
+          <option value="north">Haute latitude</option>
+        </select>
+        <div class="fields">
+          <label>Longitude (°)<input id="longitude" type="number" step="any" value="2.35" required /></label>
+          <label>Latitude (°)<input id="latitude" type="number" step="any" value="48.86" required /></label>
+        </div>
+        <div class="fields">
+          <label>Cellules<select id="side"><option value="1">1 cellule</option><option value="2">4 cellules</option><option value="3">9 cellules</option></select></label>
+          <label>Niveau<select id="level"><option>15</option><option selected>17</option><option>19</option><option>21</option></select></label>
+        </div>
+        <div class="fields">
+          <label>Relief<select id="profile"><option value="waves">Ondulations ECEF</option><option value="flat">Ellipsoïde, h = 0</option></select></label>
+          <label>Subdivisions<select id="subdivisions"><option selected>32</option><option>64</option><option>128</option></select></label>
+        </div>
+        <button type="submit" id="build">Générer la scène</button>
+      </form>
+      <div class="checks">
+        <label><input id="wireframe" type="checkbox" checked /> Maillage</label>
+        <label><input id="normals" type="checkbox" /> Normales</label>
+        <label><input id="metric-grid" type="checkbox" /> Grille tangente 5 m</label>
+      </div>
+      <div class="actions">
+        <button id="overview" type="button">Vue d’ensemble</button>
+        <button id="human" type="button">Échelle humaine</button>
+        <button id="rebase" type="button">Déplacer l’origine</button>
+      </div>
+      <p id="status" role="status" aria-live="polite">Initialisation…</p>
+      <dl id="metrics"></dl>
+      <p class="footnote">Repère : X Est · Y Haut · Z Sud<br>Hauteurs ellipsoïdales WGS84 · Capsule 1,80 m<br>Souris : orbite, zoom et déplacement</p>
+    </aside>
+    <section id="viewport" aria-label="Vue 3D du terrain">
+      <div class="badge">SYNTHÉTIQUE · 1 UNITÉ = 1 MÈTRE</div>
+      <div class="legend">Coins UV : NO rouge · NE bleu · SO jaune · SE blanc</div>
+    </section>
+  </main>
+  <script type="module" src="./main.mjs"></script>
+</body>
+</html>

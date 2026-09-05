@@ -4,45 +4,60 @@
 
 - Commit de départ : `0e06c350b6c3d07699600e0003609790d60661c4`.
 - Sauvegarde Git distante : `legacy/v1`.
-- Branche de travail initiale : `feature/v2-geo-kernel`.
+- Noyau initial : `feature/v2-geo-kernel`, PR #1.
+- Tranche terrain : `feature/v2-synthetic-terrain`, basée sur `dd1c533e928f16d65633a3d31cc711dda3076eb7`.
 - Référence fournie : `ZERANA_ARCHITECTURE_REFERENCE(1).md`, version 1.0.0.
 - SHA-256 du fichier fourni : `8fa7d13540eef938c423a83fc6e207743e48e9c9c9c33432eb10979979ce56f8`.
-- La copie de travail locale du Mac n'a pas été modifiée par cette intervention.
+- Le moteur racine, ses assets, ses dépendances et son déploiement ne sont pas remplacés.
+- La copie locale du Mac n'est pas modifiée.
 
-## Première tranche
+## Première tranche — noyau
 
 Implémenté dans `v2/src/geo/` : unités typées, WGS84, conversions ECEF/ENU,
 repère Three, transformations d'origine flottante, Mercator et IDs de cellules.
-Le noyau n'est pas branché sur le jeu existant.
+Les 80 tests existants et les fixtures PROJ sont conservés, sans changement du noyau.
+La première CI avait validé Node 22/24 et la compilation du jeu existant.
 
-Vérifié avant publication de la PR : contrôle TypeScript strict, tests de types,
-lint des frontières, compilation et 80 tests Node réussis ; ces tests comprennent
-32 cas PROJ/ECEF, 6 cas PROJ/ENU, 14 déplacements géodésiques d'un mètre et un
-scénario de 500 changements de repère successifs.
+## Deuxième tranche — terrain synthétique
 
-Vérification supplémentaire hors CI : 5 000 positions confrontées à PROJ 9.5.1,
-h entre -12 km et 100 000 km. Erreurs maximales observées en mètres :
-- conversion avant : 2.59e-8 ;
-- hauteur reconstruite : 4.48e-8 ;
-- position reconstruite : 5.38e-8.
-Ces valeurs sont des résultats sur cet échantillon, pas une preuve globale.
+Implémenté : source synthétique ellipsoïdale explicite, cache de samples borné,
+grille canonique dyadique, vertices et normales avec halo, packets CPU,
+génération de 1/4/9 cellules, métriques de raccord, démo Three.js isolée.
+Le déplacement de l'origine transforme la caméra et les racines sans recréer
+les buffers. La capsule de 1,80 m est un repère, pas un joueur physique.
 
-La CI ajoutée exécute les vérifications du noyau sur Node 22 et 24 et compile
-séparément le jeu existant en mode Pages, sans secret de production et sans
-publier la branche. Son résultat GitHub fait autorité pour l'installation avec
-les lockfiles et pour le build du jeu existant.
+59 nouveaux tests terrain ont été exécutés dans l'environnement de travail,
+avec 24 références ECEF indépendantes produites par PROJ 9.5.1 / pyproj 3.7.2.
+Les fichiers du noyau utilisés localement ont été vérifiés par leurs blobs Git.
+Les nouveaux tests couvrent notamment winding, UV, cache, indices Uint32,
+antiméridien, limites Mercator, ordre de génération et 100 changements de repère.
+
+Contrôle supplémentaire sur six zones, 9 cellules L15/N32 :
+- écart maximal de raccord, vertices Float32 et transforms CPU Float64 : 0,00006102 m ;
+- estimation illustrative des opérations Float32 : 0,00037129 m.
+Ce sont des résultats échantillonnés, pas une preuve globale ni une mesure de GPU.
+
+La CI de cette branche vérifie les 80 + 59 tests sur Node 22/24, le build du jeu
+existant et la démo sous `/Zerana/v2/` avec Chromium/SwiftShader. Elle conserve
+captures et résultats en artifact. Le résultat effectif de chaque commit et ses
+limites sont consignés dans la PR ; un workflow ajouté n'est pas considéré comme
+réussi tant que son exécution n'est pas terminée.
 
 ## Ce qui n'est PAS terminé
 
-- Milestone 0 : le lint est ciblé au noyau ; pas de lint/formatage global du legacy.
-- Milestone 1 : noyau numérique livré, pas de déplacement GPU/physique intégré.
-- Milestones 2–9 : terrain, raccords de meshes, scène métrique, runtime V2,
-  streaming, workers, cache, LOD, couches réelles et procédurales restent à faire.
-- Aucun test interactif de fluidité sur GPU réel n'est revendiqué.
-- Aucun nouveau jeu V2 n'est publié dans cette tranche.
+- Aucun terrain réel DEM/satellite n'est encore branché en V2.
+- Pas de contrôleur joueur, collider ou runtime physique rebasé.
+- Pas de streaming, workers, cache persistant, LOD mixte ou couches vectorielles V2.
+- Les patches synchrones ne démontrent pas la fluidité en déplacement.
+- Les cycles de destruction navigateur ne remplacent pas un test de plusieurs heures.
+- Aucun benchmark GPU matériel ni support de tous les navigateurs n'est revendiqué.
+- Aucun nouveau jeu V2 n'est publié par cette branche.
 
-## Prochaine tranche autorisée
+## Suite
 
-Une cellule synthétique à échelle métrique, sans accès réseau, avec ancrage,
-axes, grille, repères de position et tests de géométrie. Puis 4/9 cellules
-avec samples canoniques partagés. Ne pas ajouter les façades avant cette étape.
+Après validation de cette tranche : contrat d'élévation réelle et de son datum,
+échantillonnage raster testé, puis imagerie géoréférencée. Ne pas brancher le
+streaming ou les façades avant d'avoir validé cette superposition.
+
+Formules et limites : `adr/ADR-002-synthetic-terrain-patches.md`.
+Utilisation de la démo : `../v2/demo/README.md`.

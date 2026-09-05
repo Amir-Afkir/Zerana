@@ -12,7 +12,10 @@
     "typecheck": "tsc --noEmit && tsc -p tsconfig.type-tests.json",
     "build": "npm run clean && tsc -p tsconfig.json",
     "test": "npm run build && node --test tests/*.test.mjs",
-    "check": "npm run lint && npm run typecheck && npm test"
+    "check": "npm run lint && npm run typecheck && npm test",
+    "demo:dev": "node ../node_modules/vite/bin/vite.js --config demo/vite.config.mjs",
+    "demo:build": "node ../node_modules/vite/bin/vite.js build --config demo/vite.config.mjs",
+    "demo:test": "python tests/browser/terrain_smoke.py"
   },
   "devDependencies": {
     "typescript": "5.8.3"
