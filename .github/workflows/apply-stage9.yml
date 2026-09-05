@@ -24,7 +24,7 @@ jobs:
           assert hashlib.sha256(patch).hexdigest() == '1afd69e15a7aa59a5d4009da60af629847bdfbd0ef635ba81ba345ccc7a1a1ca'
           Path('/tmp/zerana-stage9.patch').write_bytes(patch)
           PY
-      - name: Apply only to the exact isolated baseline
+      - name: Apply content only to the exact isolated baseline
         run: |
           set -euo pipefail
           git fetch origin feature/v2-road-kernel
@@ -33,7 +33,11 @@ jobs:
           git apply --check --index /tmp/zerana-stage9.patch
           git apply --index /tmp/zerana-stage9.patch
           test "$(git write-tree)" = '8621d69a9f083eff9c9ef0ca27a5bb39127dab4f'
-          test "$(git diff --cached --name-only | wc -l | tr -d ' ')" = '21'
+          # Workflow edits are handled separately by the authorized GitHub connector.
+          # This Actions token has contents permission only.
+          git restore --source=HEAD --staged --worktree .github/workflows/deploy-pages.yml .github/workflows/v2-ci.yml
+          test "$(git write-tree)" = '86189a7c95ccedb6a03a9c75a6d6e9d99e67689b'
+          test "$(git diff --cached --name-only | wc -l | tr -d ' ')" = '19'
           git config user.name 'Zerana source transfer'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git commit -m 'feat(v2): add bounded road kernel and centerline diagnostics'
