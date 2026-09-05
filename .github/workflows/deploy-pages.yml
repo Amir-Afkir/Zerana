@@ -41,6 +41,8 @@ jobs:
       - run: npm ci --prefix v2 --ignore-scripts
       - name: Validate CPU contracts and deployment guards
         run: npm --prefix v2 run check
+      - name: Validate bounded road MVT adapters
+        run: node v2/scripts/test-road-adapters.mjs
       - name: Build V1 and isolated V2 preview
         env:
           VITE_MAPBOX_API_KEY: ${{ secrets.VITE_MAPBOX_API_KEY }}
@@ -64,6 +66,8 @@ jobs:
         env:
           ZERANA_SOAK_SECONDS: '120'
         run: python v2/tests/browser/experience_smoke.py
+      - name: Validate road kernel with binary MVT fixtures
+        run: python v2/tests/browser/roads_smoke.py
       - name: Configure Pages
         uses: actions/configure-pages@v5
       - name: Upload combined Pages artifact
@@ -140,6 +144,17 @@ jobs:
           ZERANA_LIVE_STREAM: '1'
           ZERANA_EXPECTED_TOKEN_SHA256: '9a1c9c843f9a77e5fcb98cb69f6267139fd9c547abf483c60326f4aa9316c0bc'
         run: python v2/tests/browser/experience_smoke.py
+      - name: Verify published road kernel with binary MVT fixtures
+        env:
+          ZERANA_PREVIEW_URL: ${{ needs.deploy.outputs.page_url }}v2/
+          ZERANA_EXPECTED_SHA: ${{ github.sha }}
+        run: python v2/tests/browser/roads_smoke.py
+      - name: One bounded real road provider verification
+        if: contains(github.event.head_commit.message, '[verify-road-live]')
+        env:
+          ZERANA_PREVIEW_URL: ${{ needs.deploy.outputs.page_url }}v2/
+          ZERANA_EXPECTED_SHA: ${{ github.sha }}
+        run: python v2/tests/browser/roads_live.py
       - name: Retain sanitized public verification
         if: always()
         uses: actions/upload-artifact@v4
@@ -152,5 +167,7 @@ jobs:
             v2/browser-results/sliding-window/
             v2/browser-results/experience/
             v2/browser-results/experience-live/
+            v2/browser-results/roads/
+            v2/browser-results/roads-live/
           retention-days: 7
           if-no-files-found: warn
