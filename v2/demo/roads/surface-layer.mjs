@@ -1,3 +1,4 @@
+import { WaterLayer } from '../water/layer.mjs';
 import { EnvironmentDiagnostics } from '../environment/diagnostics.mjs';
 import { RoadSurfaceView } from '../render/road-surface-view.mjs';
 import { ROAD_SURFACE_LIMITS, validateRoadSurface, roadSurfaceBytes } from '../../src/generation/roads/surface.ts';
@@ -18,7 +19,8 @@ export class RoadSurfaceLayer {
     session.panel.prepend(this.ui);this.toggle=this.ui.querySelector('input');this.status=this.ui.querySelector('p');
     this.toggle.addEventListener('change',()=>this.setEnabled(this.toggle.checked),{signal:session.events.signal});
     this.environment=new EnvironmentDiagnostics(session,stream);
-    stream.layerPayloadBytes=key=>(this.records.get(key)?.bundled?0:this.records.get(key)?.bytes||0)+this.environment.payloadBytes(key);
+    this.water=new WaterLayer(session,stream);
+    stream.layerPayloadBytes=key=>(this.records.get(key)?.bundled?0:this.records.get(key)?.bytes||0)+this.environment.payloadBytes(key)+this.water.payloadBytes(key);
     this.report();
   }
   setEnabled(enabled) {
@@ -40,7 +42,7 @@ export class RoadSurfaceLayer {
       this.stream.recycling.resize(key,packetBytes(record.bundle)+this.stream.layerPayloadBytes(key));
   }
   reset() {
-    this.cancel();this.environment.reset();for(const key of [...this.records.keys()])this.release(key);
+    this.cancel();this.environment.reset();this.water.reset();for(const key of [...this.records.keys()])this.release(key);
     this.failures.clear();this.completed=0;this.reused=0;this.evicted=0;this.lastVisible.clear();
     this.stageMax={};this.error=null;this.suspended=false;this.sourceCacheBytes=0;this.sourceCacheHits=0;this.creditSeen=null;this.nextReport=0;this.report();
   }
@@ -53,14 +55,17 @@ export class RoadSurfaceLayer {
     const account=attempts=>{if(!accounted&&this.session.worldEpoch===flight.worldEpoch)this.session.account(grant,attempts);accounted=true;};
     try {
       const result=await this.session.ensurePool().run({key:`surface:${key}`,revision:++this.serial},
-        {mode:'surface',source:config.source,profile:config.profile,token:config.token,terrains:[bundle.packet],httpGrant:grant},controller.signal);
+        {mode:'surface',source:config.source,profile:config.profile,token:config.token,terrains:[bundle.packet],httpGrant:grant,water:this.water.requested,terrainEvidence:bundle.evidence||[]},controller.signal);
       // Accounting belongs to this world, even when a selection is cancelled.
       account(result.attempts);
       if(epoch!==this.epoch||controller.signal.aborted||!this.current(flight))return;
-      validateRoadSurface(result.surface,bundle.packet);
       this.environment.offer(key,bundle,cell,result.environment,result.environmentError,result.summary.decodedSnapshots);
+      this.water.offer(key,bundle,cell,result.water,result.waterError,result.waterCacheBytes);
+      for(const credit of result.waterAttributions||[])this.session.credit(credit);
       if(result.attribution&&this.creditSeen!==result.attribution){this.session.credit(result.attribution);this.creditSeen=result.attribution;}
       this.sourceCacheBytes=result.summary.cacheBytes;this.sourceCacheHits=result.summary.cacheHits;
+      if(result.surfaceError)throw new Error(result.surfaceError);
+      validateRoadSurface(result.surface,bundle.packet);
       this.pending={...flight,packet:result.surface,bytes:roadSurfaceBytes(result.surface),stage:'mesh',handle:null};
     } catch(error) {
       account(error.attempts);
@@ -100,7 +105,7 @@ export class RoadSurfaceLayer {
       } else if(stage==='upload') {this.renderer.warm(p.handle);p.stage='commit';}
       else if(stage==='commit') {
         this.renderer.commit(p.handle);
-        if(this.stream.recycling)this.stream.recycling.resize(p.key,packetBytes(p.bundle)+p.bytes+this.environment.payloadBytes(p.key));
+        if(this.stream.recycling)this.stream.recycling.resize(p.key,packetBytes(p.bundle)+p.bytes+this.environment.payloadBytes(p.key)+this.water.payloadBytes(p.key));
         this.records.set(p.key,{...p,used:performance.now()});this.bytes+=p.bytes;
         this.completed++;this.pending=null;
       }
@@ -156,6 +161,6 @@ export class RoadSurfaceLayer {
       failedCells:this.failures.size,suspended:this.suspended,sourceCacheBytes:this.sourceCacheBytes,sourceCacheHits:this.sourceCacheHits,
       httpCharged:this.session.charged,httpLimit:this.session.httpLimit,maxStageMs:this.stageMax,
       widthAuthority:'estimated-horizontal-meters',surfaceAuthority:this.stream.config?.engineering?'engineered-physical-ground':'visual-on-terrain',collidersAdded:0};
-    this.status.textContent=this.enabled?`${cells.filter(c=>c.visible).length} cellules routières visibles · largeurs estimées · ${this.session.charged}/${this.session.httpLimit} requêtes vectorielles. ${this.error||''}`:'Surfaces automatiques désactivées. Le diagnostic manuel reste disponible.';
+    this.status.textContent=this.enabled?`${cells.filter(c=>c.visible).length} cellules routières visibles · largeurs estimées · ${this.session.charged}/${this.session.httpLimit} requêtes sources routes/eau. ${this.error||''}`:'Surfaces automatiques désactivées. Le diagnostic manuel reste disponible.';
   }
 }
