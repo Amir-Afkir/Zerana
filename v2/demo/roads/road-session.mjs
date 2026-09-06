@@ -5,9 +5,9 @@ import { roadCellKey } from '../../src/generation/roads/kernel.ts';
 /** Stage 9: explicit bounded snapshot diagnostic, NOT a second world streamer. */
 export class RoadSession {
   constructor(view,getConfig,credit,onChanged=()=>{}){
-    this.onChanged=onChanged;this.view=view;this.getConfig=getConfig;this.credit=credit;this.epoch=0;this.charged=0;this.active=false;
+    this.onChanged=onChanged;this.view=view;this.getConfig=getConfig;this.credit=credit;this.epoch=0;this.worldEpoch=0;this.httpLimit=ROAD_HTTP_LIMIT;this.charged=0;this.active=false;
     this.panel=document.createElement('section');this.panel.className='road-panel';
-    this.panel.innerHTML=`<h2>Routes — diagnostic</h2><p class="footnote">Axes cartographiques, pas encore des chaussées. Cyan : routes · jaune : chemins. Ponts, tunnels et escaliers restent en données, sans faux tracé au sol.</p><button type="button" id="road-load">Analyser la zone visible</button><button type="button" id="road-cancel" hidden>Annuler</button><label class="consent"><input type="checkbox" id="road-visible" checked /> Afficher les axes</label><p id="road-status" role="status">Chargement manuel ; maximum 32 requêtes vectorielles par monde. Aucun appel au démarrage.</p>`;
+    this.panel.innerHTML=`<h2>Routes — surfaces et diagnostic</h2><p class="footnote">Diagnostic optionnel des axes cartographiques. Cyan : routes · jaune : chemins. Ponts, tunnels et escaliers restent en données, sans faux tracé au sol.</p><button type="button" id="road-load">Analyser la zone visible</button><button type="button" id="road-cancel" hidden>Annuler</button><label class="consent"><input type="checkbox" id="road-visible" checked /> Afficher les axes</label><p id="road-status" role="status">Chargement manuel ; maximum 32 requêtes vectorielles par monde. Aucun appel au démarrage.</p>`;
     this.$=id=>this.panel.querySelector(`#${id}`);this.events=new AbortController();
     this.$('road-load').addEventListener('click',()=>void this.load(),{signal:this.events.signal});
     this.$('road-cancel').addEventListener('click',()=>this.cancel(),{signal:this.events.signal});
@@ -15,20 +15,23 @@ export class RoadSession {
     this.report({state:'idle'});
   }
   report(extra={}){
-    this.debug={...this.debug,...extra,httpCharged:this.charged,httpLimit:ROAD_HTTP_LIMIT};
+    this.debug={...this.debug,...extra,httpCharged:this.charged,httpLimit:this.httpLimit};
     window.__ZERANA_ROADS_DEBUG__=this.debug;
   }
   cancel(){this.epoch++;this.controller?.abort();this.active=false;this.$('road-load').disabled=false;this.$('road-cancel').hidden=true;this.report({state:'cancelled'});}
-  reset(){this.cancel();this.pool?.dispose();this.pool=null;this.charged=0;this.view.clearRoadDebug();this.report({state:'idle',summary:null,error:null});}
+  ensurePool(){return this.pool??=new StreamWorkerPool(1,()=>new Worker(new URL('./road.worker.mjs',import.meta.url),{type:'module'}));}
+  reserve(){const grant=Math.min(ROAD_HTTP_LIMIT,Math.max(0,this.httpLimit-this.charged));this.charged+=grant;return grant;}
+  account(grant,attempts){if(Number.isInteger(attempts)&&attempts>=0&&attempts<=grant)this.charged-=grant-attempts;}
+  reset(){this.worldEpoch++;this.surfaceLayer?.reset();this.cancel();this.pool?.dispose();this.pool=null;this.charged=0;this.view.clearRoadDebug();this.report({state:'idle',summary:null,error:null});}
   async load(){
-    const config=this.getConfig();if(this.active||!config)return;
+    const config=this.getConfig();if(this.active||!config||this.pool?.available===0)return;
     const cells=this.view.cellViews.filter(c=>c.root.visible);
     if(!cells.length||cells.length>9)return;
     const epoch=++this.epoch,controller=new AbortController();this.controller=controller;this.active=true;
     this.$('road-load').disabled=true;this.$('road-cancel').hidden=false;
     this.$('road-status').textContent='Analyse des axes dans un worker…';this.report({state:'loading',error:null});
-    this.pool??=new StreamWorkerPool(1,()=>new Worker(new URL('./road.worker.mjs',import.meta.url),{type:'module'}));
-    const grant=config.source==='mapbox'?ROAD_HTTP_LIMIT-this.charged:0;this.charged+=grant;
+    this.ensurePool();
+    const grant=config.source==='mapbox'?this.reserve():0;
     const account=attempts=>{if(Number.isInteger(attempts)&&attempts>=0&&attempts<=grant)this.charged-=grant-attempts;};
     try{
       const result=await this.pool.run({key:'road-snapshot',revision:epoch},{source:config.source,token:config.token,

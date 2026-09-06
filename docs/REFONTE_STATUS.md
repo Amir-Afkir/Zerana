@@ -171,3 +171,11 @@ et ADR-009, qui bornent aussi les promesses du plan de discussion.
 Le streaming fonctionne comme préversion expérimentale ; le DoD complet du
 Milestone 5 n'est pas déclaré terminé. Les couches vectorielles viennent ensuite.
 Les 60 Hz de simulation ne constituent pas une promesse de 60 images par seconde.
+
+## Étape 10 — surfaces et streaming routier
+
+Implémentation de surfaces métriques estimées, rubans/joints arrondis et
+partition conforme aux triangles du terrain. Couche automatique suivant la
+fenêtre de streaming, avec worker partagé, rétention et comptabilité mémoire.
+Aucun changement V1/Geo Kernel/physique. Voir `REFONTE_STAGE10.md` et ADR-010.
+Résultats effectivement exécutés et publication : consignés dans la PR.

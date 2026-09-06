@@ -16,6 +16,7 @@ import { TerrainSampler } from '../src/generation/terrain/terrain-sampler.ts';
 import { buildTerrainCell } from '../src/generation/terrain/terrain-builder.ts';
 import { measureTerrainSeams } from '../src/debug/seam-metrics.ts';
 import { TerrainView } from './render/terrain-view.mjs';
+import { RoadSurfaceLayer } from './roads/surface-layer.mjs';
 import { RoadSession } from './roads/road-session.mjs';
 import { StreamSession } from './streaming/stream-session.mjs';
 import { PlayerSession } from './runtime/player-session.mjs';
@@ -93,6 +94,7 @@ async function build(){
     busy=false;$('build').disabled=false;$('cancel-load').hidden=true;playerSession?.setLoading(false);
     if(completed&&autoExplore){
       streamSession.$('stream-network-consent').checked=isMapbox;
+      roadSession.surfaceLayer.setEnabled(true);
       streamSession.start();playerSession.start({focus:false});
       status(streamSession.active?'Prêt : streaming actif. Utilise les touches pour avancer.':'Terrain prêt ; consulte les outils pour le streaming.');
     }
@@ -123,6 +125,13 @@ try{
     packets=next;if(attributions?.length)attribution(attributions);refreshMetrics();
   });
   roadSession=new RoadSession(view,()=>busy?null:streamSession.config,value=>{attribution([value]);$('attribution').hidden=false;},refreshMetrics);
+  roadSession.surfaceLayer=new RoadSurfaceLayer(roadSession,streamSession);
+  const terrainFrame=view.onBeforeFrame;
+  view.onBeforeFrame=dt=>{
+    const deadline=performance.now()+4;
+    terrainFrame(dt);
+    roadSession.surfaceLayer.update(deadline,!streamSession.didGpuWork&&!streamSession.admission);
+  };
   $('runtime-tools').append(playerSession.panel,streamSession.panel,roadSession.panel);
   playerSession.autoResume=!manualMode;
   $('auto-explore').addEventListener('change',()=>{playerSession.autoResume=$('auto-explore').checked;});
