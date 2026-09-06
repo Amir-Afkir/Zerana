@@ -143,7 +143,10 @@ export class TerrainView{
       for(const object of this.scene.children)if(object.isLight)this.warmScene.add(object.clone());
       this.warmCamera=new THREE.PerspectiveCamera(50,1,.01,50000);
     }
-    const mesh=new THREE.Mesh(source.geometry,source.material);mesh.frustumCulled=false;
+    // Preserve the primitive kind for diagnostic lines, and compute bounds
+    // before the first draw (new BufferGeometry has no bounding sphere yet).
+    if(!source.geometry.boundingSphere)source.geometry.computeBoundingSphere();
+    const mesh=source.isLineSegments?new THREE.LineSegments(source.geometry,source.material):new THREE.Mesh(source.geometry,source.material);mesh.frustumCulled=false;
     const sphere=mesh.geometry.boundingSphere,extent=Math.max(1,sphere.radius);
     this.warmCamera.position.copy(sphere.center).add(new THREE.Vector3(0,extent*2,extent*2));
     this.warmCamera.lookAt(sphere.center);this.warmScene.add(mesh);

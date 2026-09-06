@@ -61,3 +61,23 @@ test('environment shared source: batch pressure drops optional environmental vie
  const r=await source.load([cell],'pk.fixture',new AbortController().signal,0);
  assert.equal(r.attempts,0);assert.equal(r.tiles.length,9);assert.ok(r.tiles.every(t=>t.environment===null&&t.environmentError==='ENV_BATCH_BUDGET'));
 });
+
+// This adapter contract needs no browser/GPU, and catches the first CI failure.
+import * as THREE from 'three';
+import {TerrainView} from '../../demo/render/terrain-view.mjs';
+test('environment warm-up computes missing bounds and preserves line primitives',()=>{
+ const geometry=new THREE.BufferGeometry();geometry.setAttribute('position',new THREE.Float32BufferAttribute([0,0,0,10,2,0],3));
+ const material=new THREE.LineBasicMaterial(),line=new THREE.LineSegments(geometry,material),parent=new THREE.Group();parent.add(line);
+ const originalTarget={},warmTarget={},targetCalls=[];let draws=0;
+ const view={warmTarget,warmScene:new THREE.Scene(),warmCamera:new THREE.PerspectiveCamera(),renderer:{
+  getRenderTarget:()=>originalTarget,setRenderTarget:t=>targetCalls.push(t),render:scene=>{
+   draws++;const mesh=scene.children[0];assert.equal(mesh.isLineSegments,true);assert.strictEqual(mesh.geometry,geometry);assert.strictEqual(mesh.material,material);
+  }
+ }};
+ assert.equal(geometry.boundingSphere,null);TerrainView.prototype.warmMesh.call(view,line);
+ assert.ok(geometry.boundingSphere.radius>0);assert.equal(draws,1);assert.deepEqual(targetCalls,[warmTarget,originalTarget]);
+ assert.equal(view.warmScene.children.length,0);assert.strictEqual(line.parent,parent);
+ view.renderer.render=()=>{throw Error('draw failure');};assert.throws(()=>TerrainView.prototype.warmMesh.call(view,line),/draw failure/);
+ assert.strictEqual(targetCalls.at(-1),originalTarget);assert.equal(view.warmScene.children.length,0);
+ geometry.dispose();material.dispose();
+});
