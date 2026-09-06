@@ -1,0 +1,28 @@
+name: Stage 15 pinned source
+on:
+  push:
+    branches: [work/stage15-source]
+permissions:
+  contents: read
+jobs:
+  source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ed73f2e383d48ff4015d3306e3875d11b8071ab6
+          fetch-depth: 1
+          persist-credentials: false
+      - run: |
+          git archive --format=tar.gz --output=/tmp/stage15-source.tar.gz HEAD
+          git rev-parse HEAD > /tmp/stage15-identity.txt
+          git rev-parse HEAD^{tree} >> /tmp/stage15-identity.txt
+          sha256sum /tmp/stage15-source.tar.gz >> /tmp/stage15-identity.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stage15-source
+          path: |
+            /tmp/stage15-source.tar.gz
+            /tmp/stage15-identity.txt
+          retention-days: 2
