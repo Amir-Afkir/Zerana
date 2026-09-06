@@ -1,0 +1,27 @@
+name: Hydro levels pinned source
+on:
+  push:
+    branches: [work/pr15b-levels-source]
+permissions:
+  contents: read
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: decc600b24c8eba1c565a74fa8f9a7c2d9a06cae
+          fetch-depth: 0
+          persist-credentials: false
+      - run: |
+          git branch pinned-source decc600b24c8eba1c565a74fa8f9a7c2d9a06cae
+          git bundle create /tmp/hydro-levels.bundle pinned-source
+          sha256sum /tmp/hydro-levels.bundle > /tmp/hydro-levels.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hydro-levels-source
+          path: |
+            /tmp/hydro-levels.bundle
+            /tmp/hydro-levels.sha256
+          retention-days: 2
