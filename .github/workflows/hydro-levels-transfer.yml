@@ -17,17 +17,17 @@ jobs:
         run: |
           python - <<'PY'
           import base64,gzip,hashlib,pathlib
-          patch=gzip.decompress(base64.b64decode(pathlib.Path('.transfer/refine.b64').read_text().strip(),validate=True))
-          assert hashlib.sha256(patch).hexdigest()=='f49285d4bffeff1b9cb17c874edcc8d208a8105b292e732ef1c44e7096b7a97a'
+          patch=gzip.decompress(base64.b64decode(pathlib.Path('.transfer/camera.b64').read_text().strip(),validate=True))
+          assert hashlib.sha256(patch).hexdigest()=='358e7c4c509eefedf037ac2aa0ddc567630720e6461e22bf4a4ebc949d0d963f'
           pathlib.Path('/tmp/hydro-levels.patch').write_bytes(patch)
           PY
           git fetch origin fix/pr15b-water-levels
-          test "$(git rev-parse FETCH_HEAD)" = b90f1361acb4b1b0e860cafaae4fd3b4f2faf751
+          test "$(git rev-parse FETCH_HEAD)" = ce5caf63c711d524590998937ab61b60de5f5486
           git checkout -B fix/pr15b-water-levels FETCH_HEAD
           git apply --unidiff-zero --index /tmp/hydro-levels.patch
-          test "$(git write-tree)" = 583be925cb7dbb222d4e3669f73598de70ce5e00
+          test "$(git write-tree)" = a8bc7338c1262f65e0290732e96dd32cb92d1b4f
           git diff --cached --check
           git config user.name 'Amir-Afkir'
           git config user.email 'afkir202@gmail.com'
-          git commit -m 'fix(v2): localize hydro bounds and guard collision-projected streaming exits'
+          git commit -m 'test(v2): face the river in human-camera visibility regression'
           git push origin HEAD:refs/heads/fix/pr15b-water-levels
