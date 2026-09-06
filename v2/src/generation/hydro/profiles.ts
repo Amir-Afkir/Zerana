@@ -1,7 +1,6 @@
 import type { CanonicalEnvironmentTile } from '../environment/kernel.js';
 import type { TerrainHeightSource } from '../terrain/elevation-source.js';
 import type { HydroRegion, WaterGeometry } from '../water/model.js';
-import { WATER_LIMITS } from '../water/model.js';
 import { value } from '../roads/exact.js';
 import { waterHeight } from '../water/hydro.js';
 import { HYDRO_POLICY, inRing, metricFactors } from './conditioned-elevation.js';
@@ -29,7 +28,7 @@ export function buildWaterSurfaceProfile(
       throw new Error('HYDRO_ELEVATION_ENVELOPE_INVALID');
     return b.minimumMeters;
   };
-  const n = 2 ** z, scale = n * WATER_LIMITS.gridDivisions;
+  const n = 2 ** z, scale = n * HYDRO_POLICY.profileGridDivisions;
   const byTile = new Map(tiles.map(t => [`${t.x}/${t.y}`, t]));
   if (byTile.size !== tiles.length || tiles.some(t => t.z !== z)) throw new Error('HYDRO_CONTEXT_CONTRACT');
   const footprints: HydroFootprint[] = [], basinLevels = new Map<string, number>();
@@ -88,10 +87,11 @@ export function buildWaterSurfaceProfile(
     if(!byTile.has(`${x}/${y}`))throw new Error('HYDRO_CONTEXT_INCOMPLETE');
     return (byCore.get(`${x}/${y}`)||[]).some(f=>inRing([u,v],f.rings[0]!)&&!f.rings.slice(1).some(r=>inRing([u,v],r)));
   };
+  // Bounded memoization only: eviction changes work, never the pure node value.
   const rawNodes=new Map<string,number>(),nodes=new Map<string,number>();
   function rawNode(ix:number,iy:number):number {
     ix=((ix%scale)+scale)%scale;iy=Math.max(0,Math.min(scale,iy));const k=`${ix}/${iy}`,hit=rawNodes.get(k);if(hit!==undefined)return hit;
-    if(rawNodes.size>=4096)throw new Error('HYDRO_PROFILE_BUDGET');
+    if(rawNodes.size>=4096)rawNodes.delete(rawNodes.keys().next().value!);
     const hs:number[]=[];
     for(let dy=-2;dy<=2;dy++)for(let dx=-2;dx<=2;dx++){
       const u=(ix*2+dx)/(scale*2),v=Math.max(0,Math.min(1,(iy*2+dy)/(scale*2)));
@@ -106,7 +106,7 @@ export function buildWaterSurfaceProfile(
   }
   function node(ix:number,iy:number):number {
     ix=((ix%scale)+scale)%scale;iy=Math.max(0,Math.min(scale,iy));const k=`${ix}/${iy}`,hit=nodes.get(k);if(hit!==undefined)return hit;
-    if(nodes.size>=2048)throw new Error('HYDRO_PROFILE_BUDGET');
+    if(nodes.size>=2048)nodes.delete(nodes.keys().next().value!);
     const u=ix/scale,v=iy/scale,m=metricFactors(v);let distance=Infinity,nearest:Point2|null=null;
     // Only use axes in the immediate neighbourhood: a canal on the other side
     // of the region must not control this waterbody. Unknown flow stays estimated.
@@ -123,10 +123,10 @@ export function buildWaterSurfaceProfile(
     // Bound the ENTIRE star of triangles touching this node, not just its
     // centre/25 taps. Every point of an incident triangle is in this rectangle.
     // Barycentric interpolation of capped node heights consequently cannot
-    // float above the raw surface in that triangle. A metric collar includes
-    // its banks; region/core/cell borders never change this geographic support.
-    const support=HYDRO_POLICY.gridSupportMeters+HYDRO_POLICY.shoreFalloffMeters;
-    const du=1/scale+support/m[0],dv=1/scale+support/m[1];
+    // float above the raw surface in that triangle. Do not include distant dry
+    // land: that spreads isolated DEM depressions into unrelated banks. A finer
+    // fixed lattice confines the bound; no cell-specific correction is applied.
+    const du=1/scale,dv=1/scale;
     const ceiling=lowerBound(u-du,v-dv,u+du,v+dv)-HYDRO_POLICY.waterEmbedMeters;
     const h=Math.min(estimate,ceiling);
     nodes.set(k,h);return h;
@@ -136,10 +136,10 @@ export function buildWaterSurfaceProfile(
     footprints:Object.freeze(footprints),levelAt});
 }
 export function regionFromProfile(geometry:WaterGeometry, profile:WaterSurfaceProfile, sourceTiles:readonly string[]):HydroRegion {
-  const n=WATER_LIMITS.gridDivisions,scale=2**geometry.z*n,levels=new Float64Array((n+1)**2);
+  const n=HYDRO_POLICY.profileGridDivisions,scale=2**geometry.z*n,levels=new Float64Array((n+1)**2);
   for(let y=0;y<=n;y++)for(let x=0;x<=n;x++)levels[y*(n+1)+x]=profile.levelAt((geometry.x*n+x)/scale,(geometry.y*n+y)/scale);
   const basinLevels=new Map<string,number>();
   for(const b of geometry.basins){const f=profile.footprints.find(f=>f.key===b.key);if(f?.level!==null&&f?.level!==undefined)basinLevels.set(b.key,f.level);}
   return {key:`hydro/${geometry.z}/${geometry.x}/${geometry.y}/${profile.revision}`,z:geometry.z,x:geometry.x,y:geometry.y,
-    levels,basinLevels,geometry,sourceTiles,verticalReference:profile.verticalReference,heightAuthority:profile.authority};
+    levels,gridDivisions:n,basinLevels,geometry,sourceTiles,verticalReference:profile.verticalReference,heightAuthority:profile.authority};
 }

@@ -109,3 +109,15 @@ test('hydro capped profile stays identical at region borders in reversed load or
  const b=buildWaterSurfaceProfile([...all].reverse(),[...gs].reverse(),sourceHeight,'a'.repeat(64));
  for(const u of [x/2**z,(x+1)/2**z])for(let j=0;j<=16;j++)assert.equal(a.levelAt(u,(y+j/16)/2**z),b.levelAt(u,(y+j/16)/2**z));
 });
+
+test('hydro fine-star bound confines a local depression instead of dragging distant banks down',()=>{
+ const all=context().map(t=>t.environment),gs=all.map(prepareWaterGeometry),s=2**z;
+ const hole=[(x+.5)/s,(y+.5)/s];
+ const raw={...sourceHeight,heightAt:()=>30,heightBounds:(w,n,e,so)=>({minimumMeters:w<=hole[0]&&e>=hole[0]&&n<=hole[1]&&so>=hole[1]?20:30,maximumMeters:30})};
+ const p=buildWaterSurfaceProfile(all,gs,raw,'a'.repeat(64));
+ assert.ok(p.levelAt(...hole)<20);
+ assert.ok(p.levelAt((x+.6)/s,(y+.5)/s)>29.8);
+ const first=p.levelAt((x+.05)/s,(y+.05)/s);
+ for(let j=0;j<64;j++)for(let i=0;i<64;i++)p.levelAt((x+i/64)/s,(y+j/64)/s);
+ assert.equal(p.levelAt((x+.05)/s,(y+.05)/s),first,'bounded memo eviction cannot alter the function');
+});

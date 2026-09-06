@@ -63,11 +63,11 @@ export function buildHydroRegion(geometry:WaterGeometry,tiles:readonly Canonical
 /** Piecewise-linear global hydro lattice, same diagonal convention as terrain.
  * Shared boundary heights are exact inputs; Float32 is only the final renderer. */
 export function hydroLevel(r:HydroRegion,u:number,v:number):number {
-  const n=L.gridDivisions,s=n*2**r.z,x=u*s-r.x*n,y=v*s-r.y*n;
+  const n=r.gridDivisions??L.gridDivisions,s=n*2**r.z,x=u*s-r.x*n,y=v*s-r.y*n;
   if(x < -1e-7||y < -1e-7||x>n+1e-7||y>n+1e-7)throw new Error('WATER_OUTSIDE_REGION');
   const col=Math.max(0,Math.min(n-1,Math.floor(x))),row=Math.max(0,Math.min(n-1,Math.floor(y)));
   const dx=Math.max(0,Math.min(1,x-col)),dy=Math.max(0,Math.min(1,y-row)),a=row*(n+1)+col,b=a+1,c=a+n+1,d=c+1;
   return dx+dy<=1?r.levels[a]!*(1-dx-dy)+r.levels[b]!*dx+r.levels[c]!*dy:
     r.levels[b]!*(1-dy)+r.levels[c]!*(1-dx)+r.levels[d]!*(dx+dy-1);
 }
-export function hydroGridPoint(r:HydroRegion,x:number,y:number){return {u:fraction(r.x*L.gridDivisions+x,2**r.z*L.gridDivisions),v:fraction(r.y*L.gridDivisions+y,2**r.z*L.gridDivisions)};}
+export function hydroGridPoint(r:HydroRegion,x:number,y:number){const n=r.gridDivisions??L.gridDivisions;return {u:fraction(r.x*n+x,2**r.z*n),v:fraction(r.y*n+y,2**r.z*n)};}

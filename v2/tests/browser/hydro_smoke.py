@@ -18,6 +18,7 @@ READY = '''() => {
  const h=window.__ZERANA_HYDRO_DEBUG__,s=window.__ZERANA_STREAM_DEBUG__,w=window.__ZERANA_WATER_DEBUG__;
  const e=document.querySelector('#status.error');if(e)throw Error(e.textContent);
  if(h?.error||s?.error||w?.error)throw Error(h?.error||s?.error||w?.error);
+ if(s?.scheduler?.errors?.length)throw Error(s.scheduler.errors[0].message||s.scheduler.errors[0].error||'HYDRO_STREAM_FAILED');
  return h?.active&&s?.active&&!s.waitingForWindow&&s.shownKeys.length===9&&s.shownKeys.every(k=>h.cells.some(c=>c.key===k&&c.colliderPrepared)&&w?.cells.some(c=>c.key===k&&c.ready));}'''
 
 async def run(base):

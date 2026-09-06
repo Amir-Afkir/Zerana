@@ -57,3 +57,14 @@ test('human-view diagnostic distinguishes a dry bank, a submerged camera and a c
  const bank=probeWaterView(threeLocalToEcef([-1,1,1],anchor),surfaces);assert.equal(bank.overWater,false);assert.equal(bank.clearanceMeters,null);
  assert.ok(bank.nearbyMaxWaterAbovePointMeters>1.99);
 });
+
+test('conditioned hydro lattice honors its resolution while the legacy lattice remains 16',async()=>{
+ const {hydroLevel,hydroGridPoint}=await import('../dist/generation/water/hydro.js');
+ const {value}=await import('../dist/generation/roads/exact.js');
+ for(const n of [16,64]){
+  const r={z:16,x:33000,y:22500,levels:Float64Array.from({length:(n+1)**2},(_,i)=>i%(n+1)*.02+Math.floor(i/(n+1))*.03),...(n===64?{gridDivisions:n}:{})};
+  const p=hydroGridPoint(r,5,7);
+  assert.equal(value(p.u),(r.x*n+5)/(2**r.z*n));
+  assert.equal(hydroLevel(r,value(p.u),value(p.v)),.02*5+.03*7);
+ }
+});

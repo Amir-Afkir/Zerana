@@ -96,6 +96,14 @@ export class MetricPlayer {
       const snapped=this.physics.move(this.capsule(result.position,up),scale(up,-PLAYER.groundSnapMeters));
       if(!snapped.limited && snapped.normals.some(n=>dot(n,up)>=Math.cos(PLAYER.maxSlopeRadians))){result=snapped;grounded=true;}
     }
+    // Sweep/sliding and snap may add displacement beyond the input endpoint
+    // checked above. Never commit an unsupported result at a streaming edge.
+    // Hold the previous safe pose; no synthetic floor or water collider.
+    if(!this.physics.hasSupport(result.position,up,PLAYER.radiusMeters)){
+      this.previous=state.ecefPosition;
+      this.current=Object.freeze({...state,velocityEcefMetersPerSecond:vector(0,0,0),boundaryBlocked:true,collisionLimited:true});
+      return;
+    }
     const velocity=globalVector(scale(sub(result.position,position),1/dt),this.frame);
     this.previous=state.ecefPosition;
     this.current=Object.freeze({...state,ecefPosition:threeLocalToEcef(result.position,this.frame),

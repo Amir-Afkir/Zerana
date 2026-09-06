@@ -17,8 +17,10 @@ les texels contribuant au rectangle sont inclus, sans ignorer nodata ou défaut
 de couverture. Une conversion géoïde arbitraire ne reçoit pas cette capacité.
 
 Pour chaque nœud hydro mondial, le profil prend le minimum de l’estimation et
-de l’enveloppe basse du support complet des triangles incidents, avec le
-collier de berge métrique existant. Un inset de profil de 0,10 m est explicite,
+de l’enveloppe basse du support complet des triangles incidents. La grille
+hydro fixe passe de 16 à 64 divisions par région dans le seul mode conditionné ;
+aucun collier terrestre supplémentaire n’élargit ce support pour les eaux
+ouvertes. Cela empêche une dépression ponctuelle d’abaisser des berges éloignées. Un inset de profil de 0,10 m est explicite,
 **pas** un déplacement du mesh après génération. Avec des poids barycentriques
 positifs, chaque triangle de ce profil reste sous l’enveloppe DEM qui le couvre.
 Les supports et nœuds sont indépendants du découpage des WorldCells et de leur
@@ -64,3 +66,17 @@ Un joueur entré dans un fond réellement profond peut encore être sous l’eau
 la nage n’est pas implémentée. Ce cas ne se confond pas avec une eau au-dessus
 d’une rive sèche. `hydro=0`/mode historique et `engineering=1` restent distincts.
 Les résultats CI/live/publics et captures sont consignés dans la PR du correctif.
+
+## Garde-fou du déplacement et coût de la grille
+
+Les glissements/résolutions de collision peuvent déplacer la capsule au-delà
+du déplacement demandé. Le résultat physique est désormais revérifié avant
+sa validation : sans support dans la fenêtre active, la pose ECEF précédente
+est conservée et la vitesse annulée. Pas de sol invisible ni de collider d’eau.
+Le joueur reprend lorsque les cellules nécessaires deviennent disponibles.
+
+La grille hydro 65×65 (Float64) est imputée au cache régional de 16 Mio existant.
+Les mémos gardent leurs plafonds de 4 096/2 048 entrées avec éviction et recalcul
+pur ; le terrain conserve ses 32 subdivisions. Les plafonds des paquets, du
+nombre de sommets/triangles et des opérations ne sont pas augmentés. La grille
+historique de PR15 reste à 16. Un échec de cohorte reste explicite.

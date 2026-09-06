@@ -80,7 +80,7 @@ export class HydroSource {
     // Geometry, numeric views, decoded DEM and nodal cache are all charged.
     const pointCount=geometry.reduce((s,g)=>s+g.primitives.reduce((n,p)=>n+p.polygon.length,0),0);
     const owner=completeTiles[ownerIndex];
-    const estimate=(raw.decodedHeightBytes||0)+pointCount*256+tiles.reduce((s,t)=>s+t.pointCount*192,0)+owner.pointCount*192+graph.edges.length*1200+graph.nodes.length*256+786432;
+    const estimate=(raw.decodedHeightBytes||0)+region.levels.byteLength+pointCount*256+tiles.reduce((s,t)=>s+t.pointCount*192,0)+owner.pointCount*192+graph.edges.length*1200+graph.nodes.length*256+786432;
     const result={key,revision,reads,source,raw:raw.source,region,profile,graph,tiles:[owner],deferredStructures:crossings.deferredStructures,
       attributions:[...raw.attributions,data.attribution],estimatedBytes:estimate};
     abort(signal);if(!this.regions.set(key,result,estimate))throw new Error('HYDRO_REGION_BUDGET');this.built++;

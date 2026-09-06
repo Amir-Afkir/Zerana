@@ -36,6 +36,7 @@ export const HYDRO_POLICY = Object.freeze({
   // A geographic PROFILE constraint, not a render offset: stay below the raw
   // elevation envelope at banks/open-water supports before carving the bed.
   waterEmbedMeters: 0.1,
+  profileGridDivisions: 64,
   maxFootprints: 16384,
   maxPoints: 131072,
   maxSampleTests: 150000,
