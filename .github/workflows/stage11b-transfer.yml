@@ -1,0 +1,46 @@
+name: Stage 11b verified source transfer
+on:
+  push:
+    branches: [work/stage11b-transfer]
+permissions:
+  contents: write
+jobs:
+  transfer:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Validate bounded patch and materialize isolated feature branch
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import base64, hashlib, lzma
+          parts = [Path(f'.transfer/stage11b/{i:02d}.b64').read_text().strip() for i in range(5)]
+          encoded = ''.join(parts)
+          assert len(encoded) == 41592
+          decoder = lzma.LZMADecompressor(memlimit=64*1024*1024)
+          patch = decoder.decompress(base64.b64decode(encoded, validate=True), max_length=200000)
+          assert decoder.eof and not decoder.unused_data and len(patch) == 108850
+          assert hashlib.sha256(patch).hexdigest() == 'fd2274bdda08c4333aa1054af2bf41cb56cca8c227c53824a6e615761e3bedbd'
+          Path('/tmp/stage11b.patch').write_bytes(patch)
+          PY
+          BASE=5a5c758012d2315deeeb30c65894be664ceb379c
+          TARGET=refs/heads/feature/v2-real-road-engineering
+          test -z "$(git ls-remote --heads origin "$TARGET")"
+          git checkout --detach "$BASE"
+          git apply --index /tmp/stage11b.patch
+          test "$(git write-tree)" = 22aaeb655cb00c57139a34a5df2795e7dbacbf88
+          git diff --cached --exit-code "$BASE" -- src public package.json package-lock.json vite.config.js v2/src/geo
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'feat(v2): prepare opt-in real road engineering cohorts before physical admission'
+          git push origin "HEAD:$TARGET"
+          git rev-parse HEAD > /tmp/stage11b-feature-sha.txt
+          git rev-parse HEAD^{tree} >> /tmp/stage11b-feature-sha.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stage11b-feature-identity
+          path: /tmp/stage11b-feature-sha.txt
+          retention-days: 2
