@@ -17,17 +17,17 @@ jobs:
         run: |
           python - <<'PY'
           import base64,gzip,hashlib,pathlib
-          patch=gzip.decompress(base64.b64decode(pathlib.Path('.transfer/camera.b64').read_text().strip(),validate=True))
-          assert hashlib.sha256(patch).hexdigest()=='358e7c4c509eefedf037ac2aa0ddc567630720e6461e22bf4a4ebc949d0d963f'
+          patch=gzip.decompress(base64.b64decode(pathlib.Path('.transfer/walk.b64').read_text().strip(),validate=True))
+          assert hashlib.sha256(patch).hexdigest()=='59df555ba521a982332b267fb27754d12aab341f49beb81e409738ab78354941'
           pathlib.Path('/tmp/hydro-levels.patch').write_bytes(patch)
           PY
           git fetch origin fix/pr15b-water-levels
-          test "$(git rev-parse FETCH_HEAD)" = ce5caf63c711d524590998937ab61b60de5f5486
+          test "$(git rev-parse FETCH_HEAD)" = 06107b6a15b5fcbb927d3c64fbe7d83a6905b484
           git checkout -B fix/pr15b-water-levels FETCH_HEAD
           git apply --unidiff-zero --index /tmp/hydro-levels.patch
-          test "$(git write-tree)" = a8bc7338c1262f65e0290732e96dd32cb92d1b4f
+          test "$(git write-tree)" = 3a9c78bb00849f394dd6be0697b01c2b3b1122b4
           git diff --cached --check
           git config user.name 'Amir-Afkir'
           git config user.email 'afkir202@gmail.com'
-          git commit -m 'test(v2): face the river in human-camera visibility regression'
+          git commit -m 'test(v2): reject vertical falling as traversal progress'
           git push origin HEAD:refs/heads/fix/pr15b-water-levels
