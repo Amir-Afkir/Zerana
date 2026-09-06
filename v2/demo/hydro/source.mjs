@@ -17,6 +17,23 @@ import { deferHydroCrossings } from '../../src/generation/hydro/crossings.ts';
 import { unprojectMercator } from '../../src/geo/mercator.ts';
 import { geodeticRadians } from '../../src/geo/geodetic.ts';
 import { meters } from '../../src/geo/units.ts';
+import { value } from '../../src/generation/roads/exact.ts';
+import { metricAt } from '../../src/generation/roads/footprint.ts';
+import { MAX_ROAD_WIDTH_METERS } from '../../src/generation/roads/surface-style.ts';
+
+/** Keep full canonical edges and all incident joins capable of contributing to
+ * this fixed REGION. This is not per-WorldCell clipping or a width reduction.
+ * The halo matches the footprint generator's maximum geometric support. */
+export function retainHydroRoadContext(graph,id){
+  const n=2**id.level,c=[(id.x+.5)/n,(id.y+.5)/n];
+  const m=metricAt([c[0],c[1]>.5?(id.y+1)/n:id.y/n]);
+  const hx=(MAX_ROAD_WIDTH_METERS/2+1)/m[0],hy=(MAX_ROAD_WIDTH_METERS/2+1)/m[1];
+  const near=p=>[value(p.u)+Math.round(c[0]-value(p.u)),value(p.v)];
+  const edges=graph.edges.filter(e=>{const a=near(e.a),b=near(e.b);return Math.max(a[0],b[0])>=id.x/n-hx&&Math.min(a[0],b[0])<=(id.x+1)/n+hx&&Math.max(a[1],b[1])>=id.y/n-hy&&Math.min(a[1],b[1])<=(id.y+1)/n+hy;});
+  const keys=new Set(edges.map(e=>e.key));
+  const nodes=graph.nodes.map(v=>({...v,edges:v.edges.filter(k=>keys.has(k))})).filter(v=>v.edges.length);
+  return {...graph,edges,nodes};
+}
 
 const abort = signal => { if (signal.aborted) throw new DOMException('Cancelled','AbortError'); };
 const digest = async value => [...new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(JSON.stringify(value))))].map(v=>v.toString(16).padStart(2,'0')).join('');
@@ -41,7 +58,10 @@ export class HydroSource {
     const hit=this.regions.get(key);if(hit)return hit;
     const data=await this.roads.load([cellId(z,x,y)],token,signal,32,consume);
     if(data.sourceZoom!==z||data.tiles.some(t=>!t.environment||t.environmentError))throw new Error('HYDRO_VECTOR_CONTEXT_INVALID');
-    const tiles=data.tiles.map(t=>t.environment).sort((a,b)=>a.sourceKey.localeCompare(b.sourceKey));
+    const completeTiles=data.tiles.map(t=>t.environment).sort((a,b)=>a.sourceKey.localeCompare(b.sourceKey));
+    // Keep only hydro features in the large profile context. Landcover/use of
+    // neighbouring source tiles remains in the shared LRU, not in every recipe.
+    const tiles=completeTiles.map(t=>{const features=t.features.filter(f=>['water','waterway'].includes(f.attributes.layer));return {...t,features,pointCount:features.reduce((s,f)=>s+f.paths.reduce((n,p)=>n+p.length,0),0)};});
     const geometry=tiles.map(t=>prepareWaterGeometry(t));
     const ownerIndex=tiles.findIndex(t=>t.x===x&&t.y===y);
     if(ownerIndex<0)throw new Error('HYDRO_CONTEXT_INCOMPLETE');
@@ -53,11 +73,13 @@ export class HydroSource {
     const profile=buildWaterSurfaceProfile(tiles,geometry,raw.source,revision);
     const source=new HydroConditionedElevationSource(raw.source,profile);
     const region=regionFromProfile(geometry[ownerIndex],profile,tiles.map(t=>t.sourceKey));
-    const crossings=deferHydroCrossings(buildRoadGraph(data.tiles),geometry),graph=crossings.graph;
+    const localGraph=retainHydroRoadContext(buildRoadGraph(data.tiles),cellId(z,x,y));
+    const crossings=deferHydroCrossings(localGraph,geometry),graph=crossings.graph;
     // Geometry, numeric views, decoded DEM and nodal cache are all charged.
     const pointCount=geometry.reduce((s,g)=>s+g.primitives.reduce((n,p)=>n+p.polygon.length,0),0);
-    const estimate=(raw.decodedHeightBytes||0)+pointCount*256+tiles.reduce((s,t)=>s+t.pointCount*192,0)+graph.edges.length*1200+graph.nodes.length*256+786432;
-    const result={key,revision,reads,source,raw:raw.source,region,profile,graph,tiles,deferredStructures:crossings.deferredStructures,
+    const owner=completeTiles[ownerIndex];
+    const estimate=(raw.decodedHeightBytes||0)+pointCount*256+tiles.reduce((s,t)=>s+t.pointCount*192,0)+owner.pointCount*192+graph.edges.length*1200+graph.nodes.length*256+786432;
+    const result={key,revision,reads,source,raw:raw.source,region,profile,graph,tiles:[owner],deferredStructures:crossings.deferredStructures,
       attributions:[...raw.attributions,data.attribution],estimatedBytes:estimate};
     abort(signal);if(!this.regions.set(key,result,estimate))throw new Error('HYDRO_REGION_BUDGET');this.built++;
     return result;

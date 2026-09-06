@@ -70,3 +70,18 @@ test('hydro profiles: closed lake levels use banks, not a raised DEM interior',(
  const all=tiles.map(t=>t===center?modified:{...t,features:[]});const p=buildWaterSurfaceProfile(all,all.map(prepareWaterGeometry),sourceHeight,'a'.repeat(64));
  assert.equal(p.footprints.filter(f=>f.kind==='CLOSED_STANDING_WATER').length,1);assert.equal(p.footprints[0].level,10);
 });
+
+test('hydro cache: pruning far road context preserves all 64 child-cell footprints including border joins',async()=>{
+ const {retainHydroRoadContext}=await import('../../demo/hydro/source.mjs');
+ const {roadFootprints}=await import('../../src/generation/roads/footprint.ts');
+ const {fraction}=await import('../../src/generation/roads/exact.ts');
+ const p=(u,v)=>({u:fraction(Math.round((x+u)*4096),2**z*4096),v:fraction(Math.round((y+v)*4096),2**z*4096)});
+ const attrs={category:'STREET',sourceClass:'street',sourceType:'residential',structure:'ground',layer:0,oneway:'both',surface:'paved',access:'unknown',widthMeters:null,widthProvenance:'unknown'};
+ const ends=[[p(-.2,.5),p(1.2,.5)],[p(.5,.5),p(.5,1.2)],[p(-.005,0),p(-.005,1)],[p(5,5),p(6,6)]];
+ const edges=ends.map(([a,b],i)=>({key:`test/${i}`,a,b,context:[a,b],attributes:attrs,evidence:['fixture']}));
+ const graph={schema:'zerana-road-kernel-v1',topologyAuthority:'cartographic-not-routable',edges,nodes:[{key:'junction',point:p(.5,.5),edges:['test/0','test/1'],sourceBoundary:false}],sourceTiles:['fixture'],duplicateSegments:0,unresolvedSourcePorts:0};
+ const slim=retainHydroRoadContext(graph,cellId(z,x,y));assert.equal(slim.edges.length,3);assert.equal(graph.edges.length,4);
+ for(let dy=0;dy<8;dy++)for(let dx=0;dx<8;dx++){
+  const id=cellId(19,x*8+dx,y*8+dy);assert.deepEqual(roadFootprints(slim,id),roadFootprints(graph,id));
+ }
+});
