@@ -12,7 +12,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Validate bounded patch and materialize isolated feature branch
+      - name: Validate bounded patch and materialize isolated source branch
         run: |
           python3 - <<'PY'
           from pathlib import Path
@@ -32,7 +32,10 @@ jobs:
           git checkout --detach "$BASE"
           git apply --index /tmp/stage11b.patch
           test "$(git write-tree)" = 22aaeb655cb00c57139a34a5df2795e7dbacbf88
-          git diff --cached --exit-code "$BASE" -- src public package.json package-lock.json vite.config.js v2/src/geo
+          # GITHUB_TOKEN has contents permission only; workflows stay unchanged.
+          git restore --source "$BASE" --staged --worktree .github/workflows
+          test "$(git write-tree)" = 0017b1f5933efe96f17362a7b935fd0e32989939
+          git diff --cached --exit-code "$BASE" -- src public package.json package-lock.json vite.config.js v2/src/geo .github/workflows
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git commit -m 'feat(v2): prepare opt-in real road engineering cohorts before physical admission'
