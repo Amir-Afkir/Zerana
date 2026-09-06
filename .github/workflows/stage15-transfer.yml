@@ -1,0 +1,45 @@
+name: Stage 15 verified source transfer
+on:
+  push:
+    branches: [work/stage15-transfer]
+permissions:
+  contents: write
+jobs:
+  transfer:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Validate bounded patch and create isolated feature branch
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import base64, hashlib, lzma
+          encoded = ''.join(Path(f'.transfer/stage15/{i:02d}.b64').read_text().strip() for i in range(5))
+          assert len(encoded) == 36928
+          decoder = lzma.LZMADecompressor(memlimit=128*1024*1024)
+          patch = decoder.decompress(base64.b64decode(encoded, validate=True), max_length=150000)
+          assert decoder.eof and not decoder.unused_data and len(patch) == 94214
+          assert hashlib.sha256(patch).hexdigest() == 'afa90b16b98ced7930ed9095efc34fda0a24375c875f60078f93156b349c52f3'
+          Path('/tmp/stage15.patch').write_bytes(patch)
+          PY
+          BASE=ed73f2e383d48ff4015d3306e3875d11b8071ab6
+          TARGET=refs/heads/feature/v2-water-surfaces
+          test -z "$(git ls-remote --heads origin "$TARGET")"
+          git checkout --detach "$BASE"
+          git apply --index /tmp/stage15.patch
+          test "$(git write-tree)" = c9835082b04616027b3073738e0917eb14bb7cc3
+          git diff --cached --exit-code "$BASE" -- src public package.json package-lock.json vite.config.js v2/src/geo v2/package.json v2/package-lock.json .github/workflows
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'feat(v2): stream bounded water meshes with shared preview elevations'
+          git push origin "HEAD:$TARGET"
+          git rev-parse HEAD > /tmp/stage15-feature-identity.txt
+          git rev-parse HEAD^{tree} >> /tmp/stage15-feature-identity.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stage15-feature-identity
+          path: /tmp/stage15-feature-identity.txt
+          retention-days: 2
