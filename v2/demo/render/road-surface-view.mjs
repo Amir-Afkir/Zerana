@@ -13,6 +13,7 @@ export class RoadSurfaceView {
       geometry.setAttribute('normal',new THREE.BufferAttribute(packet.normals,3));
       geometry.setAttribute('color',new THREE.BufferAttribute(packet.colors,3));
       geometry.setAttribute('uv',new THREE.BufferAttribute(packet.uvs,2));
+      geometry.setIndex(new THREE.BufferAttribute(packet.indices,1));
       geometry.computeBoundingBox();geometry.computeBoundingSphere();
       const mesh = new THREE.Mesh(geometry,material);mesh.visible=false;mesh.renderOrder=2;
       cell.root.add(mesh);

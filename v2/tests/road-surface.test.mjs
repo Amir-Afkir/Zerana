@@ -20,7 +20,7 @@ const tile=(lines,options={})=>({providerId:'fixture',version:'1',digest:'0'.rep
  features:[{attributes:props(options.props),lines}],...options});
 const graph=lines=>buildRoadGraph([tile(lines)]);
 const terrain=(x=65536,y=65536,level=17,n=16)=>buildTerrainCell(cellId(level,x,y),new TerrainSampler(syntheticElevation('flat')),n);
-const uvTriangles=p=>Array.from({length:p.triangleCount},(_,i)=>Array.from({length:3},(_,j)=>[p.uvs[i*6+j*2],1-p.uvs[i*6+j*2+1]]).reverse());
+const uvTriangles=p=>Array.from({length:p.triangleCount},(_,i)=>Array.from({length:3},(_,j)=>[p.uvs[p.indices[i*3+j]*2],1-p.uvs[p.indices[i*3+j]*2+1]]).reverse());
 const uvArea=p=>uvTriangles(p).reduce((s,t)=>s+Math.abs(signedArea(t)),0);
 const mesh=(lines,t=terrain())=>buildRoadSurface(graph(lines),t);
 for(const [category,width] of [['STREET',5.5],['FOOTWAY',1.8],['TRACK',3],['CYCLEWAY',2.5],['TRAIL',1.2]]) {
@@ -132,4 +132,28 @@ test('horizontal widths measured in ECEF across 36 latitude/direction cases',()=
   const width=Math.hypot(b.xMeters-a.xMeters,b.yMeters-a.yMeters,b.zMeters-a.zMeters);
   assert.ok(Math.abs(width-5.5)<.00001,`${y}/${slope}: ${width}`);
  }
+});
+
+test('indexed surfaces preserve every expanded GPU attribute from the pinned PR10 baseline',async()=>{
+ const fs=await import('node:fs'),crypto=await import('node:crypto');
+ const f=JSON.parse(fs.readFileSync(new URL('fixtures/road-surface-expanded-v1.json',import.meta.url)));
+ for(const item of f.cases){
+  const p=mesh(item.lines),h=crypto.createHash('sha256');assert.equal(p.triangleCount,item.triangles);
+  for(const [name,size] of [['positions',3],['normals',3],['colors',3],['uvs',2]]){
+   const expanded=new Float32Array(p.indices.length*size);
+   p.indices.forEach((index,i)=>expanded.set(p[name].subarray(index*size,index*size+size),i*size));h.update(Buffer.from(expanded.buffer));
+  }
+  assert.equal(h.digest('hex'),item.sha256);
+ }
+});
+test('dense street fixture exceeds the old expanded-vertex ceiling without increasing the payload budget',()=>{
+ const qs=Array.from({length:22},(_,i)=>Math.round(100+i*1800/21)),lines=[];
+ for(const q of qs){lines.push(qs.map(p=>[p,q]));lines.push(qs.map(p=>[q,p]));}
+ const p=mesh(lines,terrain(65536,65536,17,32));assert.ok(p.indices.length>24000);
+ assert.ok(p.positions.length/3<=24000);assert.ok(roadSurfaceBytes(p)<=2*1024*1024);
+});
+test('surface packet indices are validated before renderer adoption',()=>{
+ const t=terrain(),p=mesh([[[0,1024],[4096,1024]]],t);
+ for(const indices of [new Uint16Array([65535,0,0]),new Uint16Array(2),new Uint32Array(p.indices)])
+  assert.throws(()=>validateRoadSurface({...p,indices},t),/CONTRACT/);
 });

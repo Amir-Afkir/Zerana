@@ -1,3 +1,4 @@
+import { engineeringFixtureSource } from '../roads/engineering-fixture.js';
 import type { GeodeticPosition } from '../../geo/geodetic.js';
 import { geodeticRadians } from '../../geo/geodetic.js';
 import { geodeticToEcef } from '../../geo/ecef.js';
@@ -11,9 +12,10 @@ export interface EllipsoidElevationSource {
   readonly provenance: 'synthetic';
   heightAt(position: GeodeticPosition): Meters;
 }
-export type SyntheticProfile = 'flat' | 'waves';
+export type SyntheticProfile = 'flat' | 'waves' | 'engineering' | 'engineering-raw';
 
 export function syntheticElevation(profile: SyntheticProfile): EllipsoidElevationSource {
+  if (profile === 'engineering' || profile === 'engineering-raw') return engineeringFixtureSource(profile === 'engineering-raw');
   if (profile !== 'flat' && profile !== 'waves') throw new RangeError('Unknown synthetic profile');
   return Object.freeze({
     id: `synthetic-${profile}-v1`,

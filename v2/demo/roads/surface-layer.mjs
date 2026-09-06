@@ -51,7 +51,7 @@ export class RoadSurfaceLayer {
     const account=attempts=>{if(!accounted&&this.session.worldEpoch===flight.worldEpoch)this.session.account(grant,attempts);accounted=true;};
     try {
       const result=await this.session.ensurePool().run({key:`surface:${key}`,revision:++this.serial},
-        {mode:'surface',source:config.source,token:config.token,terrains:[bundle.packet],httpGrant:grant},controller.signal);
+        {mode:'surface',source:config.source,profile:config.profile,token:config.token,terrains:[bundle.packet],httpGrant:grant},controller.signal);
       // Accounting belongs to this world, even when a selection is cancelled.
       account(result.attempts);
       if(epoch!==this.epoch||controller.signal.aborted||!this.current(flight))return;

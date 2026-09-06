@@ -12,7 +12,7 @@ self.onmessage=async({data})=>{
   try{
     if(!['synthetic','mapbox'].includes(job.source)||!Array.isArray(job.terrains)||job.terrains.length<1||job.terrains.length>9)throw new Error('ROAD_JOB_CONTRACT');
     const ids=job.terrains.map(t=>t.id),started=performance.now();
-    const result=job.source==='mapbox'?await source.load(ids,job.token,controller.signal,job.httpGrant):{tiles:syntheticRoadTiles(ids),attempts:0,attribution:null,cacheHits:0,cacheBytes:0};
+    const result=job.source==='mapbox'?await source.load(ids,job.token,controller.signal,job.httpGrant):{tiles:syntheticRoadTiles(ids,job.profile),attempts:0,attribution:null,cacheHits:0,cacheBytes:0};
     attempts=result.attempts;
     const graph=buildRoadGraph(result.tiles);
     if(job.mode==='surface'){
@@ -21,7 +21,7 @@ self.onmessage=async({data})=>{
       if(controller.signal.aborted)throw new DOMException('Cancelled','AbortError');
       self.postMessage({kind:'result',ticket,surface,attribution:result.attribution,attempts,
         summary:{cacheBytes:result.cacheBytes,cacheHits:result.cacheHits,generationMs:performance.now()-started}},
-        [surface.positions.buffer,surface.normals.buffer,surface.colors.buffer,surface.uvs.buffer]);
+        [surface.positions.buffer,surface.normals.buffer,surface.colors.buffer,surface.uvs.buffer,surface.indices.buffer]);
       return;
     }
     const fragments=clipRoadGraph(graph,ids),packets=buildRoadDebugPackets(graph,job.terrains);

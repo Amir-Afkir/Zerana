@@ -1,0 +1,76 @@
+{
+  "sourceCommit": "7ad70eeddf993a5a0d9486da71f3e5c62b452700",
+  "description": "Expanded Float32 buffers from pre-indexing surface implementation; preserve exact triangle attributes.",
+  "cases": [
+    {
+      "lines": [
+        [
+          [
+            0,
+            1024
+          ],
+          [
+            4096,
+            1024
+          ]
+        ]
+      ],
+      "sha256": "ba6370276cb7a290783830b1249ec0dffefdc2eec83137f234a60acaedc7f115",
+      "triangles": 128
+    },
+    {
+      "lines": [
+        [
+          [
+            300,
+            900
+          ],
+          [
+            1000,
+            900
+          ],
+          [
+            1000,
+            1600
+          ]
+        ]
+      ],
+      "sha256": "f5442cb0aa38790852617caae7d5b7cd19de886efdf5e3abc2b27b9655bcf7b2",
+      "triangles": 116
+    },
+    {
+      "lines": [
+        [
+          [
+            0,
+            1024
+          ],
+          [
+            1024,
+            1024
+          ],
+          [
+            4096,
+            1024
+          ]
+        ],
+        [
+          [
+            1024,
+            0
+          ],
+          [
+            1024,
+            1024
+          ],
+          [
+            1024,
+            4096
+          ]
+        ]
+      ],
+      "sha256": "cf2acdda8a184e2005712370b1fd319d353b37f1caf8ad4386921fd7a3e9a37c",
+      "triangles": 257
+    }
+  ]
+}

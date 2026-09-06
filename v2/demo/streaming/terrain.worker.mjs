@@ -16,7 +16,7 @@ self.onmessage = async ({data}) => {
   current={revision:ticket.revision,controller};let attempts=0;
   const started=performance.now();
   try {
-    if(!['synthetic','mapbox'].includes(job.source) || !['flat','waves'].includes(job.profile) ||
+    if(!['synthetic','mapbox'].includes(job.source) || !['flat','waves','engineering','engineering-raw'].includes(job.profile) ||
       ![16,32].includes(job.subdivisions)) throw new Error('INVALID_STREAM_JOB');
     if(job.source==='mapbox' && (!Number.isSafeInteger(job.httpGrant) || job.httpGrant<0 || job.httpGrant>256))
       throw new Error('STREAM_HTTP_BUDGET');
