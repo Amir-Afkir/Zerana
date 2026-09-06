@@ -8,10 +8,10 @@ import type { RoadSurfaceStyle } from './surface-style.js';
 import { signedArea, partitionConvex, intersectConvex } from './convex.js';
 import type { Point2, ConvexPolygon } from './convex.js';
 
-export const ROAD_SURFACE_LIMITS = Object.freeze({ maxVertices: 24000, maxTrianglePieces: 192,
+export const ROAD_SURFACE_LIMITS = Object.freeze({ maxVertices: 24000, maxTriangles: 24000, maxTrianglePieces: 192,
   maxOperations: 150000, maxBytes: 2 * 1024 * 1024, residentBytes: 8 * 1024 * 1024 });
 export interface RoadSurfacePacket {
-  readonly schema: 'zerana-road-surface-v1';
+  readonly schema: 'zerana-road-surface-v2';
   readonly styleVersion: typeof ROAD_STYLE_VERSION;
   readonly cellKey: string;
   readonly terrainSourceId: string;
@@ -19,12 +19,13 @@ export interface RoadSurfacePacket {
   readonly widthAuthority: 'estimated-horizontal-meters';
   readonly positions: Float32Array; readonly normals: Float32Array;
   readonly colors: Float32Array; readonly uvs: Float32Array;
+  readonly indices: Uint16Array;
   readonly triangleCount: number; readonly primitiveCount: number;
   readonly junctionCount: number; readonly estimatedWidthCount: number;
   readonly sourceTiles: readonly string[];
 }
 export function roadSurfaceBytes(p: RoadSurfacePacket): number {
-  return p.positions.byteLength + p.normals.byteLength + p.colors.byteLength + p.uvs.byteLength +
+  return p.positions.byteLength + p.normals.byteLength + p.colors.byteLength + p.uvs.byteLength + p.indices.byteLength +
     p.sourceTiles.reduce((n, s) => n + 48 + s.length * 2, 0) + 1024;
 }
 /** Build a disjoint planar arrangement INSIDE each terrain triangle. Interpolate
@@ -46,13 +47,13 @@ export function buildRoadSurface(graph: RoadGraph, t: TerrainCellPacket): RoadSu
     for (let y = minY; y <= maxY; y++) for (let x = minX; x <= maxX; x++) bins[y * n + x]!.push(k);
   }
   const positions: number[] = [], normals: number[] = [], colors: number[] = [], uvs: number[] = [];
+  const indices: number[] = [], vertices = new Map<string, number>();
   let operations = 0;
   const emit = (polygon: ConvexPolygon, x: number, y: number, half: number, style: RoadSurfaceStyle): void => {
     if (signedArea(polygon) <= 1e-18) return;
     const a = y * (n + 1) + x, b = a + 1, c = a + n + 1, d = c + 1;
     const ids = half === 0 ? [a, c, b] : [b, c, d];
     const vertex = (p: Point2): void => {
-      if (positions.length / 3 >= ROAD_SURFACE_LIMITS.maxVertices) throw new Error('ROAD_SURFACE_VERTEX_BUDGET');
       const dx = p[0] - x, dy = p[1] - y;
       const weights = half === 0 ? [1 - dx - dy, dy, dx] : [1 - dy, 1 - dx, dx + dy - 1];
       if (weights.some(w => w < -1e-8 || w > 1 + 1e-8)) throw new Error('ROAD_SURFACE_OUTSIDE_TRIANGLE');
@@ -62,8 +63,21 @@ export function buildRoadSurface(graph: RoadGraph, t: TerrainCellPacket): RoadSu
         normal[axis]! += t.normals[ids[i]! * 3 + axis]! * weights[i]!;
       }
       const length = Math.hypot(...normal);
-      positions.push(...pos); normals.push(...normal.map(v => v / length));
-      colors.push(...style.color); uvs.push(p[0] / n, 1 - p[1] / n);
+      // Exact GPU tuple deduplication, not geographic welding or simplification.
+      // Keep normals/material boundaries distinct. No new coordinate tolerance.
+      const tuple = new Float32Array([...pos, ...normal.map(v => v / length),
+        ...style.color, p[0] / n, 1 - p[1] / n]);
+      const key = new Uint32Array(tuple.buffer).join(',');
+      let index = vertices.get(key);
+      if (index === undefined) {
+        index = positions.length / 3;
+        if (index >= ROAD_SURFACE_LIMITS.maxVertices) throw new Error('ROAD_SURFACE_VERTEX_BUDGET');
+        vertices.set(key, index);
+        positions.push(...tuple.slice(0, 3)); normals.push(...tuple.slice(3, 6));
+        colors.push(...tuple.slice(6, 9)); uvs.push(...tuple.slice(9, 11));
+      }
+      if (indices.length >= ROAD_SURFACE_LIMITS.maxTriangles * 3) throw new Error('ROAD_SURFACE_TRIANGLE_BUDGET');
+      indices.push(index);
     };
     for (let i = 1; i + 1 < polygon.length; i++) {
       // CCW east/south parameter space -> reverse for +Up Three normals.
@@ -95,24 +109,26 @@ export function buildRoadSurface(graph: RoadGraph, t: TerrainCellPacket): RoadSu
       }
     }
   }
-  const packet: RoadSurfacePacket = { schema: 'zerana-road-surface-v1', styleVersion: ROAD_STYLE_VERSION,
+  const packet: RoadSurfacePacket = { schema: 'zerana-road-surface-v2', styleVersion: ROAD_STYLE_VERSION,
     cellKey: roadCellKey(t.id), terrainSourceId: t.sourceId, surfaceAuthority: 'visual-on-terrain',
     widthAuthority: 'estimated-horizontal-meters', positions: new Float32Array(positions),
     normals: new Float32Array(normals), colors: new Float32Array(colors), uvs: new Float32Array(uvs),
-    triangleCount: positions.length / 9, primitiveCount: primitives.length,
+    indices: new Uint16Array(indices), triangleCount: indices.length / 3, primitiveCount: primitives.length,
     junctionCount: primitives.filter(p => p.key.startsWith('node/')).length,
     estimatedWidthCount: primitives.length, sourceTiles: [...graph.sourceTiles] };
   validateRoadSurface(packet, t);
   return packet;
 }
 export function validateRoadSurface(p: RoadSurfacePacket, t: TerrainCellPacket): void {
-  if (!p || p.schema !== 'zerana-road-surface-v1' || p.styleVersion !== ROAD_STYLE_VERSION ||
+  if (!p || p.schema !== 'zerana-road-surface-v2' || p.styleVersion !== ROAD_STYLE_VERSION ||
       p.cellKey !== roadCellKey(t.id) || p.terrainSourceId !== t.sourceId ||
       p.surfaceAuthority !== 'visual-on-terrain' || p.widthAuthority !== 'estimated-horizontal-meters' ||
       ![p.positions, p.normals, p.colors, p.uvs].every(a => a instanceof Float32Array) ||
-      p.positions.length % 9 !== 0 || p.positions.length / 3 > ROAD_SURFACE_LIMITS.maxVertices ||
+      p.positions.length % 3 !== 0 || p.positions.length / 3 > ROAD_SURFACE_LIMITS.maxVertices ||
       p.normals.length !== p.positions.length || p.colors.length !== p.positions.length ||
-      p.uvs.length * 3 !== p.positions.length * 2 || p.triangleCount !== p.positions.length / 9 ||
+      p.uvs.length * 3 !== p.positions.length * 2 || !(p.indices instanceof Uint16Array) || p.indices.length % 3 !== 0 ||
+      p.indices.length > ROAD_SURFACE_LIMITS.maxTriangles * 3 ||
+      p.indices.some(i => i >= p.positions.length / 3) || p.triangleCount !== p.indices.length / 3 ||
       ![p.primitiveCount,p.junctionCount,p.estimatedWidthCount].every(n => Number.isSafeInteger(n) && n >= 0) ||
       p.primitiveCount > FOOTPRINT_LIMITS.maxPrimitives || p.junctionCount > p.primitiveCount ||
       p.estimatedWidthCount !== p.primitiveCount ||

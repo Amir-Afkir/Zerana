@@ -1,3 +1,5 @@
+import { fixtureRoadPosition, ENGINEERING_FIXTURE } from '../../src/generation/roads/engineering-fixture.ts';
+import { projectMercator } from '../../src/geo/mercator.ts';
 import { normalizeMapboxRoad } from '../../src/providers/vectors/mapbox-roads.ts';
 import { WeightedLru } from '../../src/streaming/weighted-lru.ts';
 import { ROAD_LIMITS } from '../../src/generation/roads/model.ts';
@@ -74,7 +76,22 @@ export class RoadSource {
   }
 }
 /** Deterministic, explicitly fictitious centerlines for geometry regression. */
-export function syntheticRoadTiles(cells){
+export function syntheticRoadTiles(cells,profile='flat'){
+  if(['engineering','engineering-raw'].includes(profile)) {
+    // Quantize ONCE on the source lattice, then translate into each source tile.
+    // An explicitly fictitious arc; not data inferred from satellite imagery.
+    const z=Math.min(16,cells[0].level),extent=4096,scale=extent*2**z,points=[];
+    for(let s=0;s<=ENGINEERING_FIXTURE.lengthMeters;s+=ENGINEERING_FIXTURE.stepMeters){
+      const p=fixtureRoadPosition(s),m=projectMercator(p.longitudeRad,p.latitudeRad);
+      points.push([Math.round(m.u*scale),Math.round(m.v*scale)]);
+    }
+    return planRoadTiles(cells,z).map(id=>{
+      const local=points.map(p=>[p[0]-id.x*extent,p[1]-id.y*extent]),lines=[];
+      for(let i=1;i<local.length;i++)if([local[i-1],local[i]].every(p=>p.every(v=>v>=-extent&&v<=2*extent)))lines.push([local[i-1],local[i]]);
+      return {...id,extent,providerId:'zerana-engineering-fixture',version:'1',digest:'1'.repeat(64),
+        features:lines.length?[{attributes:normalizeMapboxRoad({class:'primary',type:'primary',structure:'none',layer:0,oneway:'false',surface:'paved'}),lines}]:[]};
+    });
+  }
   return planRoadTiles(cells,Math.min(16,cells[0].level)).map(id=>{
     const features=[],extent=4096;
     const append=(points,c='street',t='residential',structure='none',layer=0)=>features.push({attributes:normalizeMapboxRoad({class:c,type:t,structure,layer,oneway:'false',surface:'paved'}),lines:[points]});

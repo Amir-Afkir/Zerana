@@ -34,7 +34,7 @@ export class RoadSession {
     const grant=config.source==='mapbox'?this.reserve():0;
     const account=attempts=>{if(Number.isInteger(attempts)&&attempts>=0&&attempts<=grant)this.charged-=grant-attempts;};
     try{
-      const result=await this.pool.run({key:'road-snapshot',revision:epoch},{source:config.source,token:config.token,
+      const result=await this.pool.run({key:'road-snapshot',revision:epoch},{source:config.source,profile:config.profile,token:config.token,
         terrains:cells.map(c=>c.packet),httpGrant:grant},controller.signal);
       if(epoch!==this.epoch)return;account(result.attempts);
       // A delayed snapshot cannot attach itself to a replaced terrain or an

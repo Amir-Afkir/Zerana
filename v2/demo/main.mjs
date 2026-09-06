@@ -1,4 +1,5 @@
 import './style.css';
+import { fixtureEngineeringDiagnostics, fixtureEngineeringSample } from '../src/generation/roads/engineering-fixture.ts';
 import './providers.css';
 import './preview.css';
 import './experience.css';
@@ -79,6 +80,9 @@ async function build(){
     playerSession.install(next,nextWorld,geodeticToEcef(markerPosition),allowPreview);
     streamSession.install(next,result?.textures,{source:isMapbox?'mapbox':'synthetic',profile,
       level,subdivisions,allowPreview,token});
+    window.__ZERANA_ENGINEERING_DEBUG__={active:!isMapbox&&profile==='engineering',
+      source:source.id,...(!isMapbox&&profile.startsWith('engineering')?{...fixtureEngineeringDiagnostics(),
+        spawn:fixtureEngineeringSample(position)}:{})};
     sourceId=source.id;cacheSize=sampler.size;sampler.clear();
     providerReport=result?{snapshotId:result.snapshotId,elevationZoom:result.elevationZoom,imageryZoom:result.imageryZoom,
       requestCount:result.requestCount,waterFallbackCount:result.waterFallbackCount,evidence:result.evidence,
@@ -113,6 +117,7 @@ try{
   if(!manualMode){
     const params=new URLSearchParams(location.search);
     if(['synthetic','mapbox'].includes(params.get('source')))$('source-mode').value=params.get('source');
+    if(['flat','waves','engineering','engineering-raw'].includes(params.get('profile'))&&$('source-mode').value==='synthetic')$('profile').value=params.get('profile');
     if(['15','17','19','21'].includes(params.get('level')))$('level').value=params.get('level');
   }
   $('provider-options').hidden=$('source-mode').value!=='mapbox';
