@@ -12,6 +12,7 @@ export interface HydroCertificate {
   readonly boundaryProjectionToleranceMeters:number;
   readonly maxTerrainAboveWaterMeters:number|null;
   readonly minClearanceMeters:number|null;
+  readonly maxWaterAboveTerrainMeters:number|null;
   readonly toleranceMeters:number;
   readonly passed:boolean;
 }
@@ -55,7 +56,7 @@ export function certifyHydroTriangles(terrain:TerrainCellPacket,water:WaterPacke
   const range=(b:Triangle['bounds'])=>[Math.max(0,Math.min(size-1,Math.floor((b[0]-bx)/sx))),Math.max(0,Math.min(size-1,Math.floor((b[1]-bz)/sz))),
     Math.max(0,Math.min(size-1,Math.floor((b[2]-bx)/sx))),Math.max(0,Math.min(size-1,Math.floor((b[3]-bz)/sz)))];
   ts.forEach((t,i)=>{const [x0=0,z0=0,x1=0,z1=0]=range(t.bounds);for(let z=z0;z<=z1;z++)for(let x=x0;x<=x1;x++){const k=`${x}/${z}`,list=bins.get(k)||[];list.push(i);bins.set(k,list);}});
-  let operations=0,testedVertices=0,testedIntersections=0,max=-Infinity,waterArea=0,coveredArea=0;
+  let operations=0,testedVertices=0,testedIntersections=0,max=-Infinity,min=Infinity,waterArea=0,coveredArea=0;
   const boundaryTolerance=.001; // ECEF heights shift the ENU boundary projection slightly.
   for(let i=0;i<water.indices.length;i+=3){
     const w=triangle(water.positions,water.indices[i]!,water.indices[i+1]!,water.indices[i+2]!);
@@ -71,12 +72,12 @@ export function certifyHydroTriangles(terrain:TerrainCellPacket,water:WaterPacke
       let area=0;for(let k=1;k+1<intersection.length;k++)area+=Math.abs(cross(intersection[0]!,intersection[k]!,intersection[k+1]!))/2;
       if(area<1e-12)continue;
       covered+=area;testedIntersections++;
-      for(const p of intersection){const delta=t.height(p)-w.height(p);if(!Number.isFinite(delta))throw new Error('HYDRO_PROOF_NONFINITE');max=Math.max(max,delta);testedVertices++;}
+      for(const p of intersection){const delta=t.height(p)-w.height(p);if(!Number.isFinite(delta))throw new Error('HYDRO_PROOF_NONFINITE');max=Math.max(max,delta);min=Math.min(min,delta);testedVertices++;}
     }
     if(Math.abs(covered-expectedArea)>Math.max(1e-8,perimeter*boundaryTolerance))throw new Error('HYDRO_PROOF_COVERAGE');
     waterArea+=expectedArea;coveredArea+=covered;
   }
   if(water.triangleCount>0&&!testedIntersections)throw new Error('HYDRO_PROOF_NO_OVERLAP');
-  return {testedIntersections,testedVertices,waterProjectedAreaSquareMeters:waterArea,coveredProjectedAreaSquareMeters:coveredArea,boundaryProjectionToleranceMeters:boundaryTolerance,maxTerrainAboveWaterMeters:max===-Infinity?null:max,minClearanceMeters:max===-Infinity?null:-max,
+  return {testedIntersections,testedVertices,waterProjectedAreaSquareMeters:waterArea,coveredProjectedAreaSquareMeters:coveredArea,boundaryProjectionToleranceMeters:boundaryTolerance,maxTerrainAboveWaterMeters:max===-Infinity?null:max,minClearanceMeters:max===-Infinity?null:-max,maxWaterAboveTerrainMeters:min===Infinity?null:-min,
     toleranceMeters:HYDRO_POLICY.numericalToleranceMeters,passed:max<=HYDRO_POLICY.numericalToleranceMeters};
 }

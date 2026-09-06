@@ -22,7 +22,7 @@ READY = '''() => {
 
 async def run(base):
     OUTPUT.mkdir(parents=True, exist_ok=True)
-    report={'mode':'LIVE_HYDRO_RECONCILIATION' if LIVE else 'FIXTURE_HYDRO_RECONCILIATION','success':False,'checks':[], 'requestLimit':LIMIT,'probes':[]}
+    report={'levelPolicy':'bank-constrained-lower-envelope-preview','mode':'LIVE_HYDRO_RECONCILIATION' if LIVE else 'FIXTURE_HYDRO_RECONCILIATION','success':False,'checks':[], 'requestLimit':LIMIT,'probes':[]}
     requests=[];vectors=[];errors=[];unexpected=[];http_errors=[]
     flags={'blocked':False};blocked=asyncio.Event();gate=asyncio.Event();gate.set()
     async with async_playwright() as p:
@@ -72,12 +72,30 @@ async def run(base):
             assert h['sameTerrainAndCollider'] and not h['waterCollider'] and h['renderLiftMeters']==0
             assert h['maxTerrainAboveWaterMeters'] is None or h['maxTerrainAboveWaterMeters']<=h['toleranceMeters']
             for c in h['cells']:
+                assert c['levelAuthority']=='bank-constrained-lower-envelope-preview'
+                if c['waterTriangles']:
+                    assert c['maxWaterAboveRawTerrainMeters'] is not None
+                    assert c['certificate']['maxWaterAboveTerrainMeters'] is not None
                 assert c['certificate']['passed'] and c['terrainSourceId']==c['waterTerrainSourceId']
             assert s['mainThreadBvhBuildCount']==0
             assert s['loadedBytes']<=s['maxResidentPayloadBytes']
             assert d['water']['residentBytes']<=d['water']['residentLimit']
             assert d['terrain']['seams']['maxGapMeters']<.001
             return d
+        async def human_view(name, strict_bank=False):
+            # Stay in the player's real camera, not the overview/orbit camera.
+            if not (await page.evaluate(STATE))['player']['active']:
+                await page.locator('#viewport').click(position={'x':700,'y':550})
+            await page.wait_for_timeout(300)
+            q=await page.evaluate('window.__ZERANA_HYDRO_VIEW_PROBE__()')
+            assert q and q['active']
+            # A camera under real water differs from water floating above a bank.
+            if strict_bank:
+                assert not q['foot']['overWater'], 'Seine bank probe must be on dry terrain'
+                assert q['eye']['nearbyVertices']>0
+                assert q['eye']['nearbyMaxWaterAbovePointMeters']<0, q
+            await page.screenshot(path=str(OUTPUT/f'{name}-human.png'))
+            return q
         async def overview(name):
             await page.locator('#diagnostics').evaluate('(e)=>e.open=true');await page.click('#overview');await page.wait_for_timeout(500)
             canvas=page.locator('#viewport canvas');on=await canvas.screenshot()
@@ -111,6 +129,10 @@ async def run(base):
                 if not wet:
                     probe['qualification']='NO_WATER_IN_REQUESTED_WINDOW';continue
                 assert d['hydro']['modifiedSamples']>0
+                if name in ['seine','fixture']:
+                    assert d['hydro']['maxWaterAboveRawTerrainMeters']<=d['hydro']['toleranceMeters']
+                    assert d['hydro']['maxWaterAboveConditionedTerrainMeters']<1, 'Floating water/deep gap regression'
+                    probe['humanView']=await human_view(name,strict_bank=name=='seine')
                 probe['visiblePixels']=await overview(name)
                 report['checks'].append(name+'-conditioned-ground-water-collider-and-triangle-proof')
                 if name in ['seine','fixture']:
@@ -120,6 +142,9 @@ async def run(base):
                     await walk(page,'ArrowLeft',70,timeout=90000);probe['back']=await ready()
                     returned={c['key']:c['waterGeometryId'] for c in probe['back']['hydro']['cells']}
                     assert all(returned.get(k)==v for k,v in original.items())
+                    probe['humanReturnView']=await human_view(name+'-return',strict_bank=name=='seine')
+                    assert probe['back']['hydro']['maxWaterAboveRawTerrainMeters']<=probe['back']['hydro']['toleranceMeters']
+                    assert probe['back']['hydro']['maxWaterAboveConditionedTerrainMeters']<1
                     assert probe['back']['player']['state']['grounded'] and probe['back']['stream']['reused']>0
                     await page.keyboard.press('Escape');await page.locator('#diagnostics').evaluate('(e)=>e.open=true')
                     for _ in range(3):await page.click('#rebase')
@@ -127,6 +152,7 @@ async def run(base):
                     assert all({c['key']:c['waterGeometryId'] for c in probe['rebased']['hydro']['cells']}.get(k)==v for k,v in original.items())
                     before=len(requests);await page.uncheck('#water-visible');await page.check('#water-visible');await ready();assert len(requests)==before
                     report['checks'].append(name+'-70m-return-three-rebases-and-hot-cohort-recycling')
+                    report['checks'].append(name+'-two-sided-elevation-bounds-and-human-camera')
             assert report['probes'][0]['waterPresent'], 'Seine regression must contain visible water'
             if not LIVE:
                 paths=[s for s in vectors if s.endswith('.pbf')];assert len(paths)==len(set(paths))
@@ -146,7 +172,8 @@ async def run(base):
         except Exception as e:
             report['failureType']=type(e).__name__
             # Whitelist engine diagnostics only. A traceback/URL could carry a token.
-            text=await page.locator('#status').inner_text()
+            try:text=await page.locator('#status').inner_text(timeout=1000)
+            except Exception:text='STATUS_UNAVAILABLE'
             report['status']=text if 'access_token' not in text and 'pk.' not in text else 'REDACTED'
             raise
         finally:

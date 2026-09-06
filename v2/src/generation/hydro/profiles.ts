@@ -22,6 +22,13 @@ export function buildWaterSurfaceProfile(
 ): WaterSurfaceProfile {
   const z = tiles[0]?.z;
   if (z !== 16 && z !== 15 || !tiles.length || tiles.length > 16 || geometries.length !== tiles.length) throw new Error('HYDRO_CONTEXT_CONTRACT');
+  if(typeof raw.heightBounds !== 'function')throw new Error('HYDRO_ELEVATION_ENVELOPE_REQUIRED');
+  const lowerBound=(w:number,n:number,e:number,s:number):number=>{
+    const b=raw.heightBounds!(w,Math.max(0,n),e,Math.min(1,s));
+    if(!Number.isFinite(b.minimumMeters)||!Number.isFinite(b.maximumMeters)||b.minimumMeters>b.maximumMeters)
+      throw new Error('HYDRO_ELEVATION_ENVELOPE_INVALID');
+    return b.minimumMeters;
+  };
   const n = 2 ** z, scale = n * WATER_LIMITS.gridDivisions;
   const byTile = new Map(tiles.map(t => [`${t.x}/${t.y}`, t]));
   if (byTile.size !== tiles.length || tiles.some(t => t.z !== z)) throw new Error('HYDRO_CONTEXT_CONTRACT');
@@ -40,17 +47,26 @@ export function buildWaterSurfaceProfile(
     if (geometry.sourceKey !== tile.sourceKey) throw new Error('HYDRO_CONTEXT_CONTRACT');
     const core = [tile.x/n,tile.y/n,(tile.x+1)/n,(tile.y+1)/n] as const;
     for (const b of geometry.basins) {
-      const heights: number[] = [];
+      const heights: number[] = []; let bankCeiling=Infinity;
       // Fixed subdivisions of each original bank edge. Never dependent on cells.
       for (let i = 0; i < b.rings[0]!.length; i++) {
         const a = b.rings[0]![i]!, c = b.rings[0]![(i+1)%b.rings[0]!.length]!;
         const av:Point2=[value(a.u),value(a.v)],cv:Point2=[value(c.u),value(c.v)],m=metricFactors((av[1]+cv[1])/2);
         const steps=Math.max(1,Math.ceil(Math.hypot((cv[0]-av[0])*m[0],(cv[1]-av[1])*m[1])/8));
         if (heights.length + steps > 4096) throw new Error('HYDRO_PROFILE_BUDGET');
-        for(let k=0;k<steps;k++) heights.push(waterHeight(raw,av[0]+(cv[0]-av[0])*k/steps,av[1]+(cv[1]-av[1])*k/steps));
+        for(let k=0;k<steps;k++) {
+          const u0=av[0]+(cv[0]-av[0])*k/steps,v0=av[1]+(cv[1]-av[1])*k/steps;
+          const u1=av[0]+(cv[0]-av[0])*(k+1)/steps,v1=av[1]+(cv[1]-av[1])*(k+1)/steps;
+          const support=HYDRO_POLICY.gridSupportMeters+HYDRO_POLICY.shoreFalloffMeters;
+          bankCeiling=Math.min(bankCeiling,lowerBound(Math.min(u0,u1)-support/m[0],Math.min(v0,v1)-support/m[1],
+            Math.max(u0,u1)+support/m[0],Math.max(v0,v1)+support/m[1]));
+          heights.push(waterHeight(raw,u0,v0));
+        }
       }
       if(!heights.length) throw new Error('HYDRO_PROFILE_UNRESOLVED');
-      basinLevels.set(b.key,median(heights));
+      // A high quay/bridge pixel must not lift a whole basin above its lowest
+      // bank. Preserve deep interior DEM values: these are NOT bed observations.
+      basinLevels.set(b.key,Math.min(median(heights),bankCeiling-HYDRO_POLICY.waterEmbedMeters));
     }
     for (const f of tile.features.filter(f => f.attributes.layer === 'water')) for(let i=0;i<f.polygons.length;i++) {
       const key=`${f.key}/polygon/${i}`, level=basinLevels.get(key)??null;
@@ -103,7 +119,16 @@ export function buildWaterSurfaceProfile(
       const d=Math.hypot((p[0]-uu)*m[0],(p[1]-v)*m[1]);
       if(d<distance){distance=d;nearest=p;}
     }
-    const h=nearest&&distance<=40&&covered(u,v)?interpolate(nearest[0],nearest[1],rawNode):rawNode(ix,iy);
+    const estimate=nearest&&distance<=40&&covered(u,v)?interpolate(nearest[0],nearest[1],rawNode):rawNode(ix,iy);
+    // Bound the ENTIRE star of triangles touching this node, not just its
+    // centre/25 taps. Every point of an incident triangle is in this rectangle.
+    // Barycentric interpolation of capped node heights consequently cannot
+    // float above the raw surface in that triangle. A metric collar includes
+    // its banks; region/core/cell borders never change this geographic support.
+    const support=HYDRO_POLICY.gridSupportMeters+HYDRO_POLICY.shoreFalloffMeters;
+    const du=1/scale+support/m[0],dv=1/scale+support/m[1];
+    const ceiling=lowerBound(u-du,v-dv,u+du,v+dv)-HYDRO_POLICY.waterEmbedMeters;
+    const h=Math.min(estimate,ceiling);
     nodes.set(k,h);return h;
   }
   const levelAt=(u:number,v:number)=>interpolate(u,v,node);
