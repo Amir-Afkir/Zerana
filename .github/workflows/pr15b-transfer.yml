@@ -1,0 +1,38 @@
+name: PR15b checksum-verified source transfer
+on:
+  push:
+    branches: [work/pr15b-implementation-transfer]
+permissions:
+  contents: write
+jobs:
+  transfer:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Verify source patch and advance isolated feature branch
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import base64, lzma, hashlib
+          s = ''.join(Path(f'.transfer/pr15b/{i:02d}.b64').read_text().strip() for i in range(5))
+          assert len(s) == 47068
+          d = lzma.LZMADecompressor(memlimit=64*1024*1024)
+          p = d.decompress(base64.b64decode(s, validate=True), max_length=200000)
+          assert d.eof and not d.unused_data and len(p) == 127980
+          assert hashlib.sha256(p).hexdigest() == '2d34c1b1c4d46e6c265a9fab9a72a209d04d4933d7f7388cdf22b2c7b2a31264'
+          Path('/tmp/pr15b.patch').write_bytes(p)
+          PY
+          BASE=fc64a696fe1854e4fe563e07bf7de08592dcd1ea
+          TARGET=refs/heads/fix/pr15b-hydro-reconciliation
+          test "$(git ls-remote --heads origin "$TARGET" | cut -f1)" = "$BASE"
+          git checkout --detach "$BASE"
+          git apply --index /tmp/pr15b.patch
+          test "$(git write-tree)" = 61d0c32ab70e8fddad921afa845fa4ab3693d875
+          git diff --cached --exit-code "$BASE" -- src public package.json package-lock.json vite.config.js v2/src/geo .github/workflows
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'feat(v2): reconcile hydro elevation before terrain and collision generation'
+          git push origin "HEAD:$TARGET"
