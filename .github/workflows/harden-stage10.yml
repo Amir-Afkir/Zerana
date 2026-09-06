@@ -1,0 +1,38 @@
+name: Stage 10 verified hardening transfer
+on:
+  push:
+    branches: [work/stage10-source]
+    paths: ['transfer/stage10/hardening.b64', '.github/workflows/harden-stage10.yml']
+permissions:
+  contents: write
+jobs:
+  transfer:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Verify exact patch
+        run: |
+          python - <<'PY'
+          import base64, hashlib, lzma
+          from pathlib import Path
+          p = lzma.decompress(base64.b64decode(Path('transfer/stage10/hardening.b64').read_text(), validate=True))
+          assert len(p) == 9174
+          assert hashlib.sha256(p).hexdigest() == 'd564b9397dcc51611d8cdd9a5dd4fb341d4d225dec861e3b2a12cf002e9a2fed'
+          Path('/tmp/hardening.patch').write_bytes(p)
+          PY
+      - name: Apply only to expected branch
+        run: |
+          set -euo pipefail
+          git fetch origin feature/v2-road-surfaces
+          test "$(git rev-parse FETCH_HEAD)" = '1645cca756ec0dc69aa88845552ab7a13144bc57'
+          git checkout --detach FETCH_HEAD
+          git apply --check --index /tmp/hardening.patch
+          git apply --index /tmp/hardening.patch
+          test "$(git write-tree)" = '5d28339abe3b5bac36286a42968d72c0f06dea3d'
+          git config user.name 'Zerana source transfer'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'fix(v2): harden road residency and verify independent metric widths'
+          git push origin HEAD:refs/heads/feature/v2-road-surfaces
