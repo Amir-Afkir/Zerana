@@ -1,0 +1,21 @@
+name: Stage 10 pinned source
+on:
+  push:
+    branches: [work/stage10-source]
+    paths: ['.github/workflows/stage10-source.yml']
+permissions:
+  contents: read
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: bd8152f91c1166b07181d131afd44668e487db75
+      - run: git archive --format=tar HEAD > source.tar
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stage10-source
+          path: source.tar
+          retention-days: 1
