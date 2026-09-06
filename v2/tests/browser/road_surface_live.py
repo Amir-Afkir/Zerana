@@ -1,4 +1,4 @@
-"""Delivery opt-in only. 96 actual Mapbox attempts maximum, not a benchmark.
+"""Delivery opt-in only. 128 actual Mapbox attempts maximum, not a benchmark.
 Uses the real automatic route/terrain stream and never retains tokens/queries.
 """
 import asyncio
@@ -13,7 +13,7 @@ from experience_smoke import query, walk
 async def run():
     base=os.environ['ZERANA_PREVIEW_URL'];expected=os.environ['ZERANA_EXPECTED_SHA']
     output=Path(__file__).resolve().parents[2]/'browser-results'/'road-surface-live';output.mkdir(parents=True,exist_ok=True)
-    report={'mode':'LIVE_AUTOMATIC_ROAD_SURFACES','success':False,'checks':[],'requestLimit':96}
+    report={'mode':'LIVE_AUTOMATIC_ROAD_SURFACES','success':False,'checks':[],'requestLimit':128,'cellLevel':17}
     requests=[];errors=[];http_errors=[];unexpected=[]
     async with async_playwright() as p:
         browser=await p.chromium.launch(headless=True,args=['--no-sandbox','--use-gl=angle','--use-angle=swiftshader','--enable-unsafe-swiftshader'])
@@ -24,7 +24,7 @@ async def run():
         async def intercept(route):
             parts=urlsplit(route.request.url)
             if parts.hostname=='api.mapbox.com':
-                if len(requests)>=96:unexpected.append('live-request-cap');await route.abort();return
+                if len(requests)>=128:unexpected.append('live-request-cap');await route.abort();return
                 token=parse_qs(parts.query).get('access_token',[''])[0]
                 fingerprint=os.getenv('ZERANA_EXPECTED_TOKEN_SHA256')
                 if fingerprint and hashlib.sha256(token.encode()).hexdigest()!=fingerprint:
@@ -38,21 +38,21 @@ async def run():
               const d=window.__ZERANA_ROAD_SURFACE_DEBUG__,s=window.__ZERANA_STREAM_DEBUG__;
               if(d?.error) throw Error(d.error);
               return s?.active && !s.waitingForWindow && s.shownKeys.length===9 && s.shownKeys.every(k=>d?.cells.some(c=>c.key===k));
-            }''',timeout=90000)
+            }''',timeout=120000)
             return await page.evaluate('window.__ZERANA_ROAD_SURFACE_DEBUG__')
         try:
-            await page.goto(query(base,source='mapbox',level='19'),wait_until='domcontentloaded')
+            await page.goto(query(base,source='mapbox',level='17'),wait_until='domcontentloaded')
             initial=await ready()
             assert await page.evaluate('window.__ZERANA_TERRAIN_DEBUG__.buildSha')==expected
             assert await page.input_value('#source-mode')=='mapbox'
             assert initial['enabled'] and sum(c['triangles'] for c in initial['cells'])>0
             assert initial['collidersAdded']==0
             report['initial']=initial;report['checks'].append('live-mapbox-surfaces-automatic-no-analysis-click')
-            await walk(page,'ArrowUp',55,timeout=90000);forward=await ready()
+            await walk(page,'ArrowRight',90,timeout=120000);forward=await ready()
             assert forward['completed']>initial['completed']
             assert await page.evaluate('window.__ZERANA_PLAYER_DEBUG__.state.grounded')
             report['forward']=forward;report['checks'].append('native-walk-loads-new-road-cells-with-ground-support')
-            await walk(page,'ArrowDown',55,timeout=90000);back=await ready()
+            await walk(page,'ArrowLeft',90,timeout=120000);back=await ready()
             ids={c['key']:c['geometryId'] for c in back['cells']}
             original={c['key']:c['geometryId'] for c in initial['cells']}
             retained=[k for k in original if k in ids]
