@@ -83,11 +83,28 @@ async def run(base):
             assert d['water']['residentBytes']<=d['water']['residentLimit']
             assert d['terrain']['seams']['maxGapMeters']<.001
             return d
+        async def changed_pixels(on, off):
+            return await page.evaluate('''async images=>{const load=src=>new Promise((ok,no)=>{let i=new Image();i.onload=()=>ok(i);i.onerror=no;i.src='data:image/png;base64,'+src;});
+              const [a,b]=await Promise.all(images.map(load)),c=document.createElement('canvas');c.width=a.width;c.height=a.height;
+              const x=c.getContext('2d',{willReadFrequently:true});x.drawImage(a,0,0);const aa=x.getImageData(0,0,c.width,c.height).data;
+              x.drawImage(b,0,0);const bb=x.getImageData(0,0,c.width,c.height).data;let changed=0;
+              for(let i=0;i<aa.length;i+=4)if(Math.max(Math.abs(aa[i]-bb[i]),Math.abs(aa[i+1]-bb[i+1]),Math.abs(aa[i+2]-bb[i+2]))>12)changed++;
+              return {changed,total:c.width*c.height};}''',[base64.b64encode(on).decode(),base64.b64encode(off).decode()])
         async def human_view(name, strict_bank=False):
             # Stay in the player's real camera, not the overview/orbit camera.
             if not (await page.evaluate(STATE))['player']['active']:
                 await page.locator('#viewport').click(position={'x':700,'y':550})
             await page.wait_for_timeout(300)
+            before_heading=(await page.evaluate(STATE))['player']['state']['headingRad']
+            if strict_bank:
+                # Turn using the same pointer input as the player. Fixed Seine
+                # probe faces east toward the river, not north away from it.
+                await page.locator('#diagnostics').evaluate('(e)=>e.open=true')
+                bb=await page.locator('#viewport canvas').bounding_box()
+                mx=bb['x']+200;my=bb['y']+bb['height']*.55;dx=500
+                await page.mouse.move(mx,my);await page.mouse.down()
+                await page.mouse.move(mx+dx,my,steps=12);await page.mouse.up()
+                await page.wait_for_timeout(300)
             q=await page.evaluate('window.__ZERANA_HYDRO_VIEW_PROBE__()')
             assert q and q['active']
             # A camera under real water differs from water floating above a bank.
@@ -95,19 +112,26 @@ async def run(base):
                 assert not q['foot']['overWater'], 'Seine bank probe must be on dry terrain'
                 assert q['eye']['nearbyVertices']>0
                 assert q['eye']['nearbyMaxWaterAbovePointMeters']<0, q
+            if strict_bank:
+                canvas=page.locator('#viewport canvas');on=await canvas.screenshot()
+                await page.uncheck('#water-visible');await page.wait_for_timeout(250);off=await canvas.screenshot()
+                await page.check('#water-visible');await page.wait_for_timeout(250)
+                q['visiblePixels']=await changed_pixels(on,off)
+                assert q['visiblePixels']['changed']>=64, 'Water must be visible from the actual player camera'
             await page.screenshot(path=str(OUTPUT/f'{name}-human.png'))
+            if strict_bank:
+                # Restore heading: the existing 70m east/west route is unchanged.
+                await page.mouse.move(mx+dx,my);await page.mouse.down()
+                await page.mouse.move(mx,my,steps=12);await page.mouse.up()
+                after_heading=(await page.evaluate(STATE))['player']['state']['headingRad']
+                assert abs(after_heading-before_heading)<1e-6
             return q
         async def overview(name):
             await page.locator('#diagnostics').evaluate('(e)=>e.open=true');await page.click('#overview');await page.wait_for_timeout(500)
             canvas=page.locator('#viewport canvas');on=await canvas.screenshot()
             await page.uncheck('#water-visible');await page.wait_for_timeout(250);off=await canvas.screenshot()
             await page.check('#water-visible');await page.wait_for_timeout(250)
-            pixels=await page.evaluate('''async images=>{const load=src=>new Promise((ok,no)=>{let i=new Image();i.onload=()=>ok(i);i.onerror=no;i.src='data:image/png;base64,'+src;});
-              const [a,b]=await Promise.all(images.map(load)),c=document.createElement('canvas');c.width=a.width;c.height=a.height;
-              const x=c.getContext('2d',{willReadFrequently:true});x.drawImage(a,0,0);const aa=x.getImageData(0,0,c.width,c.height).data;
-              x.drawImage(b,0,0);const bb=x.getImageData(0,0,c.width,c.height).data;let changed=0;
-              for(let i=0;i<aa.length;i+=4)if(Math.max(Math.abs(aa[i]-bb[i]),Math.abs(aa[i+1]-bb[i+1]),Math.abs(aa[i+2]-bb[i+2]))>12)changed++;
-              return {changed,total:c.width*c.height};}''',[base64.b64encode(on).decode(),base64.b64encode(off).decode()])
+            pixels=await changed_pixels(on,off)
             assert pixels['changed']>=64,(name,pixels)
             await page.screenshot(path=str(OUTPUT/f'{name}.png'))
             return pixels
