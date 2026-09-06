@@ -5,7 +5,8 @@ import { WeightedLru } from '../../src/streaming/weighted-lru.ts';
 import { ROAD_LIMITS } from '../../src/generation/roads/model.ts';
 import { cellId } from '../../src/geo/mercator-cell-scheme.ts';
 import { isPublicMapboxToken } from '../site-token.mjs';
-import { decodeRoadMvt,MAX_MVT_BYTES } from './mvt-roads.mjs';
+import { MAX_MVT_BYTES } from './mvt-roads.mjs';
+import { decodeVectorSnapshot } from '../environment/vector-snapshot.mjs';
 
 export const ROAD_HTTP_LIMIT=32;
 const TILESET='mapbox.mapbox-streets-v8';
@@ -39,10 +40,10 @@ export function parseRoadMetadata(json){
  * No persistence; one bounded worker-local decoded LRU, tied to this token. */
 export class RoadSource {
   // Native WorkerGlobalScope.fetch requires its global receiver, unlike Node mocks.
-  constructor(fetcher=(url,init)=>globalThis.fetch(url,init)){this.fetcher=fetcher;this.cache=new WeightedLru(16*1048576,16);this.token=null;this.metadata=null;}
+  constructor(fetcher=(url,init)=>globalThis.fetch(url,init)){this.fetcher=fetcher;this.cache=new WeightedLru(16*1048576,16);this.token=null;this.metadata=null;this.decodedSnapshots=0;}
   async load(cells,token,signal,grant,onHttpAttempt=()=>{}){
     if(!isPublicMapboxToken(token)||!Number.isInteger(grant)||grant<0||grant>ROAD_HTTP_LIMIT)throw new Error('ROAD_REQUEST_CONTRACT');
-    if(this.token!==token){this.cache.clear();this.metadata=null;this.token=token;}
+    if(this.token!==token){this.cache.clear();this.metadata=null;this.token=token;this.decodedSnapshots=0;}
     let attempts=0;
     const request=async path=>{
       aborted(signal);if(attempts>=grant)throw new Error('ROAD_HTTP_BUDGET');onHttpAttempt();attempts++;
@@ -61,17 +62,26 @@ export class RoadSource {
     };
     try{
       if(!this.metadata){const bytes=await request(`${TILESET}.json`);this.metadata=parseRoadMetadata(JSON.parse(new TextDecoder().decode(bytes)));}
-      const ids=planRoadTiles(cells,this.metadata.maxzoom),tiles=[];let payload=0;
+      const ids=planRoadTiles(cells,this.metadata.maxzoom),tiles=[];let payload=0,environmentDropped=false;
       for(const id of ids){
         aborted(signal);const key=`${id.z}/${id.x}/${id.y}`;let tile=this.cache.get(key);
         if(!tile){
           const bytes=await request(`${TILESET}/${key}.vector.pbf`);
-          tile=decodeRoadMvt(bytes,id,{providerId:TILESET,version:this.metadata.version,digest:await sha(bytes)});
-          this.cache.set(key,tile,tile.decodedBytes);
+          tile=decodeVectorSnapshot(bytes,id,{providerId:TILESET,version:this.metadata.version,digest:await sha(bytes)});
+          this.decodedSnapshots++;this.cache.set(key,tile,tile.decodedBytes);
         }
-        payload+=tile.decodedBytes;if(payload>32*1048576)throw new Error('ROAD_DECODED_BUDGET');tiles.push(tile);
+        const withoutEnvironment=t=>({...t,environment:null,environmentError:'ENV_BATCH_BUDGET',decodedBytes:t.roadDecodedBytes??t.decodedBytes});
+        if(environmentDropped)tile=withoutEnvironment(tile);
+        tiles.push(tile);payload+=tile.decodedBytes;
+        if(payload>32*1048576){
+          // Do not turn environmental complexity into a regression for roads.
+          // Drop only this job's environmental views, never mutate cached tiles.
+          environmentDropped=true;payload=0;
+          for(let i=0;i<tiles.length;i++){tiles[i]=withoutEnvironment(tiles[i]);payload+=tiles[i].decodedBytes;}
+          if(payload>32*1048576)throw new Error('ROAD_DECODED_BUDGET');
+        }
       }
-      return {tiles,attribution:this.metadata.attribution,attempts,sourceZoom:ids[0].z,cacheBytes:this.cache.bytes,cacheHits:this.cache.hits};
+      return {tiles,attribution:this.metadata.attribution,attempts,sourceZoom:ids[0].z,cacheBytes:this.cache.bytes,cacheHits:this.cache.hits,decodedSnapshots:this.decodedSnapshots};
     }catch(error){error.attempts=attempts;throw error;}
   }
 }

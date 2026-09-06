@@ -1,3 +1,5 @@
+import { buildEnvironmentPacket } from '../../src/generation/environment/debug-packet.ts';
+import { syntheticEnvironmentTile } from '../environment/synthetic.mjs';
 import { RoadSource,syntheticRoadTiles } from './road-source.mjs';
 import { buildRoadGraph,clipRoadGraph } from '../../src/generation/roads/kernel.ts';
 import { buildRoadDebugPackets } from '../../src/generation/roads/debug-packet.ts';
@@ -18,10 +20,18 @@ self.onmessage=async({data})=>{
     if(job.mode==='surface'){
       if(job.terrains.length!==1)throw new Error('ROAD_SURFACE_JOB');
       const surface=buildRoadSurface(graph,job.terrains[0]);
+      let environment=null,environmentError=null;
+      try{
+        const id=job.terrains[0].id;
+        const owners=result.tiles.filter(t=>Math.floor(id.x/2**(id.level-t.z))===t.x&&Math.floor(id.y/2**(id.level-t.z))===t.y);
+        const tiles=owners.map(t=>job.source==='synthetic'?syntheticEnvironmentTile(t):t.environment);
+        environmentError=owners.find(t=>t.environmentError)?.environmentError||null;
+        if(!environmentError&&tiles.every(Boolean))environment=buildEnvironmentPacket(tiles,job.terrains[0]);
+      }catch(e){environmentError=/^ENV_[A-Z_]+$/.test(e.message)?e.message:'ENV_BUILD_FAILED';}
       if(controller.signal.aborted)throw new DOMException('Cancelled','AbortError');
-      self.postMessage({kind:'result',ticket,surface,attribution:result.attribution,attempts,
-        summary:{cacheBytes:result.cacheBytes,cacheHits:result.cacheHits,generationMs:performance.now()-started}},
-        [surface.positions.buffer,surface.normals.buffer,surface.colors.buffer,surface.uvs.buffer,surface.indices.buffer]);
+      self.postMessage({kind:'result',ticket,surface,environment,environmentError,attribution:result.attribution,attempts,
+        summary:{decodedSnapshots:result.decodedSnapshots||0,cacheBytes:result.cacheBytes,cacheHits:result.cacheHits,generationMs:performance.now()-started}},
+        [surface.positions.buffer,surface.normals.buffer,surface.colors.buffer,surface.uvs.buffer,surface.indices.buffer,...(environment?[environment.positions.buffer,environment.colors.buffer]:[])]);
       return;
     }
     const fragments=clipRoadGraph(graph,ids),packets=buildRoadDebugPackets(graph,job.terrains);
