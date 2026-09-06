@@ -121,6 +121,7 @@ export class RoadSurfaceLayer {
     // Engineered terrain already owns its road geometry. Adopt metadata only;
     // never run a second provider request or evict this physical cohort's layer.
     for(const [key,bundle] of this.stream.loaded){
+      if(bundle.hydro&&bundle.environment){const cell=this.view.findCell(bundle.packet.id);if(cell)this.environment.offer(key,bundle,cell,bundle.environment,null,bundle.hydro.decodedSnapshots);}
       if(bundle.roadSurface&&!this.records.has(key)){
         const cell=this.view.findCell(bundle.packet.id),handle=cell?.roadSurface;
         if(handle){
@@ -143,7 +144,7 @@ export class RoadSurfaceLayer {
       if(this.pending&&allowGpu&&performance.now()<deadline)this.advance();
       if(!this.suspended&&!this.flight&&!this.pending&&!this.session.active&&performance.now()<deadline&&(!this.session.pool||this.session.pool.available)){
         const wanted=[...(this.stream.plan?.wanted||[])].sort((a,b)=>Number(shown.has(b.key))-Number(shown.has(a.key))||a.priority-b.priority);
-        const interest=wanted.find(i=>this.stream.loaded.has(i.key)&&!this.stream.loaded.get(i.key).engineering&&!this.records.has(i.key)&&this.failures.get(i.key)!==this.stream.loaded.get(i.key));
+        const interest=wanted.find(i=>this.stream.loaded.has(i.key)&&!this.stream.loaded.get(i.key).engineering&&!this.stream.loaded.get(i.key).hydro&&!this.records.has(i.key)&&this.failures.get(i.key)!==this.stream.loaded.get(i.key));
         if(interest){
           const bundle=this.stream.loaded.get(interest.key),cell=this.view.findCell(bundle.packet.id);
           if(cell)void this.dispatch(interest.key,bundle,cell);

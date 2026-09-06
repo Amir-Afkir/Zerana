@@ -1,3 +1,4 @@
+import { WaterSurfaceView } from './render/water-surface-view.mjs';
 import { prepareRealPatch } from './streaming/real-patch.mjs';
 import { RoadSurfaceView } from './render/road-surface-view.mjs';
 import './style.css';
@@ -65,10 +66,12 @@ async function build(){
     const subdivisions=Number($('subdivisions').value),level=Number($('level').value),profile=$('profile').value;
     const allowPreview=isMapbox && $('allow-preview').checked,token=isMapbox?resolveMapboxToken($('mapbox-token').value,siteToken):'';
     const engineering=isMapbox&&$('real-engineering').checked;
-    const config={source:isMapbox?'mapbox':'synthetic',profile,level,subdivisions,allowPreview,token,engineering};
+    const hydro=isMapbox&&!engineering&&new URLSearchParams(location.search).get('hydro')==='1';
+    if(hydro&&new URLSearchParams(location.search).get('water')==='0')throw new Error('HYDRO_WATER_REQUIRED');
+    const config={source:isMapbox?'mapbox':'synthetic',profile,level,subdivisions,allowPreview,token,engineering,hydro};
     const ids=terrainPatchCells(position,level,Number($('side').value));
-    if(engineering)bootstrap=await prepareRealPatch(ids,position,config,controller.signal,(n,total)=>{if(request===requestRevision)status(`Terrain et routes aménagés : ${n}/${total}`);});
-    const result=isMapbox&&!engineering?await loadMapboxPatch({cells:ids,subdivisions,token,
+    if(engineering||hydro)bootstrap=await prepareRealPatch(ids,position,config,controller.signal,(n,total)=>{if(request===requestRevision)status(`Terrain et routes aménagés : ${n}/${total}`);});
+    const result=isMapbox&&!bootstrap?await loadMapboxPatch({cells:ids,subdivisions,token,
       allowPreview,signal:controller.signal,
       onProgress:(n,total)=>{if(request===requestRevision)status(`Tuiles reçues : ${n}/${total}`);}}):null;
     if(controller.signal.aborted||request!==requestRevision)return;
@@ -84,7 +87,11 @@ async function build(){
     view.setPatch(next,nextWorld,geodeticToEcef(markerPosition),result?.textures);
     if(bootstrap){
       const renderer=new RoadSurfaceView(view);
-      for(const b of bootstrap.bundles)renderer.commit(renderer.stage(view.findCell(b.packet.id),b.roadSurface));
+      const waterRenderer=new WaterSurfaceView(view);
+      for(const b of bootstrap.bundles){
+        renderer.commit(renderer.stage(view.findCell(b.packet.id),b.roadSurface));
+        if(b.water)waterRenderer.commit(waterRenderer.stage(view.findCell(b.packet.id),b.water));
+      }
     }
     packets=next;world=nextWorld;
     playerSession.install(next,nextWorld,geodeticToEcef(markerPosition),allowPreview,bootstrap?.prepared);
@@ -95,7 +102,7 @@ async function build(){
     sourceId=source.id;cacheSize=sampler?.size||0;sampler?.clear();
     providerReport=result?{snapshotId:result.snapshotId,elevationZoom:result.elevationZoom,imageryZoom:result.imageryZoom,
       requestCount:result.requestCount,waterFallbackCount:result.waterFallbackCount,evidence:result.evidence,
-      verticalReference:source.verticalReference,accuracy:'not-certified'}:bootstrap?{engineering:true,requestCount:bootstrap.httpActual,elevationZoom:15,imageryZoom:18,verticalReference:source.verticalReference,accuracy:'not-certified'}:null;
+      verticalReference:source.verticalReference,accuracy:'not-certified'}:bootstrap?{engineering,hydro,requestCount:bootstrap.httpActual,elevationZoom:15,imageryZoom:18,verticalReference:source.verticalReference,accuracy:'not-certified'}:null;
     $('source-badge').textContent=isMapbox?'MAPBOX · RELIEF APPROXIMATIF':'SYNTHÉTIQUE · 1 UNITÉ = 1 MÈTRE';
     $('source-badge').classList.toggle('preview-warning',isMapbox);
     $('attribution').hidden=!isMapbox;$('uv-legend').hidden=isMapbox||!$('wireframe').checked;
@@ -131,6 +138,8 @@ try{
     if(['synthetic','mapbox'].includes(params.get('source')))$('source-mode').value=params.get('source');
     if(['flat','waves','engineering','engineering-raw'].includes(params.get('profile'))&&$('source-mode').value==='synthetic')$('profile').value=params.get('profile');
     if(['15','17','19','21'].includes(params.get('level')))$('level').value=params.get('level');
+    for(const [key,id,limit] of [['lon','longitude',180],['lat','latitude',85.0511287798066]]){const v=params.get(key);if(v!==null&&Number.isFinite(Number(v))&&Math.abs(Number(v))<=limit)$(id).value=v;}
+    if(params.get('hydro')==='1'){$('level').value=['19','21'].includes(params.get('level'))?params.get('level'):'19';$('subdivisions').value='32';}
     if(params.get('engineering')==='1'&&$('source-mode').value==='mapbox'){$('real-engineering').checked=true;if(!['19','21'].includes(params.get('level')))$('level').value='19';}
   }
   $('provider-options').hidden=$('source-mode').value!=='mapbox';

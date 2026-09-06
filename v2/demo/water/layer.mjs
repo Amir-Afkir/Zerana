@@ -1,24 +1,10 @@
+import { waterMaterial } from '../render/water-surface-view.mjs';
 import * as THREE from 'three';
 import { WATER_LIMITS as L } from '../../src/generation/water/model.ts';
 import { waterPacketBytes,validateWaterPacket,assertWaterReadSets } from '../../src/generation/water/surface.ts';
 import { packetBytes } from '../streaming/packet.mjs';
 import { elevationReads } from './readset.mjs';
 
-function material(){
-  return new THREE.ShaderMaterial({uniforms:{waterTime:{value:0}},depthTest:true,depthWrite:true,transparent:false,
-    vertexShader:`varying vec2 waterUv;varying vec3 waterNormal;varying vec3 waterView;
-      void main(){waterUv=uv;waterNormal=normalize(normalMatrix*normal);vec4 p=modelViewMatrix*vec4(position,1.0);waterView=-p.xyz;gl_Position=projectionMatrix*p;}`,
-    fragmentShader:`uniform float waterTime;varying vec2 waterUv;varying vec3 waterNormal;varying vec3 waterView;
-      void main(){float x=6.28318530718*waterUv.x;float y=6.28318530718*waterUv.y;
-        vec3 n=normalize(waterNormal+vec3(.045*sin(x+waterTime*.65)+.025*sin(y-waterTime*.4),.025*cos(x-y),.04*cos(y+waterTime*.5)));
-        vec3 eye=normalize(waterView);float fresnel=.04+.75*pow(1.0-max(0.0,dot(n,eye)),5.0);
-        vec3 deep=vec3(.016,.115,.15);vec3 sky=vec3(.32,.50,.57);
-        float sun=pow(max(0.0,dot(n,normalize(eye+normalize(vec3(-.5,.8,1.0))))),96.0);
-        gl_FragColor=vec4(mix(deep,sky,fresnel)+vec3(.35)*sun,1.0);
-        #include <tonemapping_fragment>
-        #include <colorspace_fragment>
-      }`});
-}
 /** Surface and GPU ownership follow the existing terrain root. Reflection is
  * a cheap procedural sky approximation, not a scene-reflection render pass. */
 export class WaterLayer {
@@ -31,7 +17,7 @@ export class WaterLayer {
     this.toggle.addEventListener('change',()=>{this.enabled=this.toggle.checked;for(const r of this.records.values())if(r.mesh)r.mesh.visible=this.enabled&&r.stage==='ready';this.report();},{signal:session.events.signal});this.report();
   }
   current(r){return this.stream.loaded.get(r.key)===r.bundle&&this.view.findCell(r.bundle.packet.id)===r.cell;}
-  payloadBytes(key){return this.records.get(key)?.bytes||0;}
+  payloadBytes(key){const r=this.records.get(key);return r?.bundled?0:r?.bytes||0;}
   resize(r){if(this.stream.recycling&&this.stream.loaded.get(r.key)===r.bundle)this.stream.recycling.resize(r.key,packetBytes(r.bundle)+this.stream.layerPayloadBytes(r.key));}
   remove(key){
     const r=this.records.get(key);if(!r)return;r.mesh?.removeFromParent();
@@ -54,6 +40,19 @@ export class WaterLayer {
   }
   update(deadline,allowGpu){
     const time=performance.now()/1000;
+    // Already admitted as an indivisible physical cohort. Only adopt ownership
+    // metadata: no late water build, HTTP, GPU upload or terrain replacement.
+    for(const [key,bundle] of this.stream.loaded){
+      if(!bundle.hydro||!bundle.water||this.records.has(key))continue;
+      const cell=this.view.findCell(bundle.packet.id);if(!cell)continue;
+      const handle=cell.waterSurface;
+      if(bundle.water.triangleCount&&!handle)continue;
+      if(handle)handle.mesh.visible=this.enabled;
+      const bytes=waterPacketBytes(bundle.water);
+      this.records.set(key,{key,bundle,cell,packet:bundle.water,bytes,bundled:true,stage:'ready',mesh:handle?.mesh||null,
+        geometry:handle?.geometry||null,material:handle?.material||null,everVisible:false,lastVisible:false});
+      this.bytes+=bytes;
+    }
     // Later terrain may come from a different provider revision after cache
     // eviction. Recheck on terrain membership changes, not on every frame.
     const revision=`${this.stream.epoch}/${this.stream.installed}/${this.stream.evicted}`;
@@ -73,7 +72,7 @@ export class WaterLayer {
       if(r){const started=performance.now(),stage=r.stage;didWork=true;try{
         if(r.stage==='data'){
           r.geometry=new THREE.BufferGeometry();r.geometry.setAttribute('position',new THREE.BufferAttribute(r.packet.positions,3));r.geometry.setAttribute('normal',new THREE.BufferAttribute(r.packet.normals,3));r.geometry.setAttribute('uv',new THREE.BufferAttribute(r.packet.uvs,2));r.geometry.setIndex(new THREE.BufferAttribute(r.packet.indices,1));r.geometry.computeBoundingBox();r.geometry.computeBoundingSphere();
-          r.material=material();for(const resource of [r.geometry,r.material]){this.view.own(resource);r.cell.resources.add(resource);}
+          r.material=waterMaterial();for(const resource of [r.geometry,r.material]){this.view.own(resource);r.cell.resources.add(resource);}
           r.mesh=new THREE.Mesh(r.geometry,r.material);r.mesh.name='water-surface-preview';r.mesh.visible=false;r.mesh.renderOrder=3;r.cell.root.add(r.mesh);r.stage='shader';
         }else if(r.stage==='shader'){
           r.stage='waiting';Promise.resolve(this.view.renderer.compileAsync(r.mesh,this.view.camera,this.view.scene)).then(()=>{if(this.records.get(r.key)===r)r.stage='upload';}).catch(()=>{if(this.records.get(r.key)===r){this.remove(r.key);this.error='WATER_SHADER_FAILED';}});
@@ -87,7 +86,7 @@ export class WaterLayer {
     const cells=[...this.records].map(([key,r])=>({key,ready:r.stage==='ready',visible:r.cell.root.visible,drawn:r.cell.root.visible&&!!r.mesh?.visible,geometryId:r.geometry?.uuid||null,triangleCount:r.packet.triangleCount,areaSquareMeters:r.packet.areaSquareMeters,
       regionKey:r.packet.regionKey,enclosedLevels:r.packet.enclosedLevels,readSet:r.packet.readSet,minLevelMeters:r.packet.minLevelMeters,maxLevelMeters:r.packet.maxLevelMeters,deferredWaterways:r.packet.deferredWaterways,bytes:r.bytes}));
     window.__ZERANA_WATER_DEBUG__={enabled:this.enabled,requested:this.requested,cells,error:this.error,residentBytes:this.bytes,residentLimit:L.residentBytes,cacheBytes:this.cacheBytes,reused:this.reused,evicted:this.evicted,maxStageMs:this.maxStageMs,
-      heightAuthority:'estimated-not-hydraulically-qualified',terrainModified:false,collidersAdded:0,swimming:false,renderLiftMeters:.03,supportedMode:!this.stream.config?.engineering};
+      heightAuthority:'estimated-not-hydraulically-qualified',terrainModified:this.stream.config?.hydro===true,collidersAdded:0,swimming:false,renderLiftMeters:this.stream.config?.hydro?0:.03,supportedMode:!this.stream.config?.engineering};
     this.status.textContent=this.stream.config?.engineering?'Eau réservée au mode routier normal.':!this.requested?'Eau désactivée pour cette session (water=0).':`${cells.filter(c=>c.visible&&c.ready&&c.triangleCount).length} cellules d’eau visibles · niveaux estimés · ${this.error||'streaming et recyclage actifs'}`;
   }
 }

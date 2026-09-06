@@ -1,3 +1,4 @@
+import { admitHydroCohort } from '../hydro/cohort.mjs';
 import { assertReadSetsCompatible } from '../../src/generation/roads/snapshot-readset.ts';
 import { ROAD_SURFACE_LIMITS,roadSurfaceBytes } from '../../src/generation/roads/surface.ts';
 import './stream.css';
@@ -149,7 +150,7 @@ export class StreamSession {
     let grant=0;
     if(this.config.source==='mapbox') {
       const dem=planRasterTiles([interest.id],Math.min(interest.id.level,15),256,this.config.subdivisions,1);
-      grant=Math.min(this.config.engineering?128:2*(dem.length+1),HTTP_LIMIT-this.httpCharged);
+      grant=Math.min((this.config.engineering||this.config.hydro)?128:2*(dem.length+1),HTTP_LIMIT-this.httpCharged);
       if(grant<=0){this.stop('STREAM_HTTP_BUDGET');return;}
       this.httpCharged+=grant; // Reserve worst case BEFORE starting network work.
     }
@@ -169,7 +170,7 @@ export class StreamSession {
     }).catch(error=>{
       if(epoch!==this.epoch||this.disposed)return;
       account(error.attempts);
-      const code=error.message;this.scheduler.fail(ticket,code,this.now,!code.startsWith('ROAD_')&&!['ABORTED','PROVIDER_AUTH','PROVIDER_NOT_FOUND','STREAM_HTTP_BUDGET'].includes(code));
+      const code=error.message;this.scheduler.fail(ticket,code,this.now,!code.startsWith('ROAD_')&&!code.startsWith('HYDRO_')&&!['ABORTED','PROVIDER_AUTH','PROVIDER_NOT_FOUND','STREAM_HTTP_BUDGET'].includes(code));
       if(['PROVIDER_AUTH','ROAD_PROVIDER_AUTH','STREAM_HTTP_BUDGET'].includes(code))this.stop(code);
     }).finally(()=>{if(epoch===this.epoch)this.controllers.delete(ticket.revision);});
   }
@@ -258,6 +259,7 @@ export class StreamSession {
           if(this.loaded.size<STREAM_LIMITS.maxCells&&this.recycling.fits(packetBytes(ready.value))){
             try{
               if(!this.admission){
+                if(ready.value.hydro)admitHydroCohort(ready.value,[...this.loaded.values()]);
                 if(ready.value.engineering){
                   assertReadSetsCompatible(ready.value.engineering.readSet,[...this.loaded.values()].map(b=>b.engineering?.readSet||[]));
                   const revisions=new Map([...this.loaded.values()].flatMap(b=>(b.engineering?.regions||[]).map(r=>[r.regionKey,r.sourceRevision])));
@@ -279,6 +281,7 @@ export class StreamSession {
                 const neighbors=scheme.getNeighbors(bundle.packet.id).map(id=>this.loaded.get(streamCellKey(id))?.packet).filter(Boolean);
                 const seams=measureTerrainSeams([bundle.packet,...neighbors],this.player.player.frame,{allowSourceSnapshots:true});
                 if(seams.mismatchedKeys||seams.maxGapMeters>.001||seams.maxNormalDelta>.001)throw new Error('STREAM_SEAM_MISMATCH');
+                if(bundle.hydro)admitHydroCohort(bundle,[...this.loaded.values()]);
                 this.player.physics.syncPackets(next,new Map([[bundle.packet,bundle.colliderIndex]]));
                 this.loaded.set(ready.ticket.key,bundle);this.recycling.insert(ready.ticket.key,packetBytes(bundle));
                 this.scheduler.installed(ready.ticket);this.installed++;
@@ -341,6 +344,24 @@ export class StreamSession {
       maxCommitMs:this.maxCommitMs||0,peakQueuedBytes:this.peakQueuedBytes||0,
       scheduler:this.scheduler?.snapshot()||null};
     window.__ZERANA_STREAM_DEBUG__=summary;
+    const hydroCells=[...this.loaded].filter(([,b])=>b.hydro).map(([key,b])=>({key,visible:this.shown?.has(key)||false,
+      revision:b.hydro.revision,region:b.hydro.region,readSet:b.hydro.readSet,kinds:b.hydro.kinds,
+      maxLoweringMeters:b.hydro.maxLoweringMeters,modifiedSamples:b.hydro.modifiedSamples,
+      waterTriangles:b.water.triangleCount,waterLevelMin:b.water.minLevelMeters,waterLevelMax:b.water.maxLevelMeters,
+      certificate:b.hydro.certificate,deferredStructures:b.hydro.deferredStructures,
+      terrainSourceId:b.packet.sourceId,waterTerrainSourceId:b.water.terrainSourceId,
+      colliderPrepared:!!b.collider,waterGeometryId:this.view.findCell(b.packet.id)?.waterSurface?.geometry.uuid||null}));
+    const maxima=hydroCells.map(c=>c.certificate.maxTerrainAboveWaterMeters).filter(v=>v!==null);
+    window.__ZERANA_HYDRO_DEBUG__={active:this.config?.hydro===true,version:'hydro-conditioned-v1',cells:hydroCells,
+      maxTerrainAboveWaterMeters:maxima.length?Math.max(...maxima):null,
+      toleranceMeters:.00001,depthAuthority:'preview-artificial-hydro-clearance',
+      verticalReference:this.config?.hydro?'UNRESOLVED_DATUM_PREVIEW':null,
+      modifiedSamples:hydroCells.reduce((n,c)=>n+c.modifiedSamples,0),
+      error:this.error,httpActual:summary.httpActual,httpLimit:HTTP_LIMIT,
+      sameTerrainAndCollider:true,waterCollider:false,renderLiftMeters:0};
+    let hydroPanel=this.panel.querySelector('#hydro-status');
+    if(this.config?.hydro&&!hydroPanel){hydroPanel=document.createElement('pre');hydroPanel.id='hydro-status';hydroPanel.className='footnote';hydroPanel.style.whiteSpace='pre-wrap';this.panel.append(hydroPanel);}
+    if(hydroPanel){hydroPanel.hidden=!this.config?.hydro;const h=window.__ZERANA_HYDRO_DEBUG__;hydroPanel.textContent=`HYDRO · PREVIEW / DATUM NON RÉSOLU\nRégions : ${[...new Set(hydroCells.map(c=>c.region))].join(', ')}\nTypes : ${[...new Set(hydroCells.flatMap(c=>c.kinds))].join(', ')}\nClearance artificielle : 0,25 / 0,50 m\nRaccord extérieur : 4 m + 6 m de transition\nConflit max terrain/eau : ${h.maxTerrainAboveWaterMeters===null?'aucune eau':h.maxTerrainAboveWaterMeters.toFixed(6)+' m'}\nÉchantillons abaissés : ${h.modifiedSamples}\nVersions : ${hydroCells.map(c=>c.revision.slice(0,12)).filter((v,i,a)=>a.indexOf(v)===i).join(', ')}\nReadsets complets : __ZERANA_HYDRO_DEBUG__\nStructures différées : ${Math.max(0,...hydroCells.map(c=>c.deferredStructures))}\nTerrain rendu et collider : même maillage`;}
     const engineered=[...this.loaded].filter(([,b])=>b.engineering);
     window.__ZERANA_REAL_ENGINEERING_DEBUG__={active:this.config?.engineering===true,
       version:'real-ground-engineering-v1',authority:'estimated-game-earthwork',qualifiedForDriving:false,boundaryMode:'fixed-raw-collar',
@@ -358,5 +379,5 @@ export class StreamSession {
     if(this.active&&this.sliding&&!summary.scheduler?.errors.length)this.message(this.waiting?'Préparation de la fenêtre suivante ; terrain précédent conservé.':'Fenêtre 3×3 prête. Les cellules quittées restent en recyclage.');
     if(this.active&&summary.scheduler?.errors.length)this.message(`Chargements en erreur : ${summary.scheduler.errors.join(', ')}. Le sol valide est conservé.`);
   }
-  dispose(){this.stop();this.disposed=true;this.loaded.clear();this.seen?.clear();this.events.abort();this.view.onBeforeFrame=null;this.player.beforeRespawn=null;this.panel.remove();window.__ZERANA_STREAM_DEBUG__={disposed:true};window.__ZERANA_REAL_ENGINEERING_DEBUG__={disposed:true};}
+  dispose(){this.stop();this.disposed=true;this.loaded.clear();this.seen?.clear();this.events.abort();this.view.onBeforeFrame=null;this.player.beforeRespawn=null;this.panel.remove();window.__ZERANA_STREAM_DEBUG__={disposed:true};window.__ZERANA_REAL_ENGINEERING_DEBUG__={disposed:true};window.__ZERANA_HYDRO_DEBUG__={disposed:true};}
 }

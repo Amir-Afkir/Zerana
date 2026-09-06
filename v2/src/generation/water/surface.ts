@@ -21,8 +21,8 @@ export interface WaterPacket {
   readonly minLevelMeters:number|null;readonly maxLevelMeters:number|null;
   readonly sourceTiles:readonly string[];readonly readSet:readonly WaterRead[];
   readonly verticalReference:TerrainCellPacket['verticalReference'];
-  readonly heightAuthority:'estimated-not-hydraulically-qualified';readonly renderLiftMeters:0.03;
-  readonly terrainModified:false;readonly collidersAdded:0;readonly swimming:false;
+  readonly heightAuthority:'estimated-not-hydraulically-qualified';readonly renderLiftMeters:0|0.03; readonly hydroRevision?:string;
+  readonly terrainModified:boolean;readonly collidersAdded:0;readonly swimming:false;
 }
 export function waterPacketBytes(p:WaterPacket):number {
   return p.positions.byteLength+p.normals.byteLength+p.uvs.byteLength+p.indices.byteLength+p.readSet.length*256+p.sourceTiles.length*256+2048;
@@ -43,7 +43,9 @@ export function assertWaterReadSets(reads:readonly WaterRead[],sets:readonly (re
 /** Union inside exact global hydro triangles. Areas precede line ribbons;
  * holes and source-core ownership survive triangulation and WorldCell clipping.
  * No duplicated coplanar surfaces, late terrain edits or water-floor collider. */
-export function buildWaterSurface(r:HydroRegion,t:TerrainCellPacket,readSet:readonly WaterRead[]=[]):WaterPacket {
+export function buildWaterSurface(r:HydroRegion,t:TerrainCellPacket,readSet:readonly WaterRead[]=[],options:{readonly hydroRevision?:string}={}):WaterPacket {
+  const conditioned=options.hydroRevision!==undefined, lift=conditioned?0:.03;
+  if(conditioned&&!/^[a-f0-9]{64}$/.test(options.hydroRevision!))throw new Error('HYDRO_REVISION_CONTRACT');
   if(!r||r.heightAuthority!=='estimated-not-hydraulically-qualified'||r.verticalReference!==t.verticalReference||
     !(r.levels instanceof Float64Array)||r.levels.length!==(L.gridDivisions+1)**2||r.levels.some(v=>!Number.isFinite(v)||Math.abs(v)>100000)||
     r.geometry.z!==r.z||r.geometry.x!==r.x||r.geometry.y!==r.y||r.geometry.primitives.length>L.maxSourceTriangles)throw new Error('WATER_REGION_CONTRACT');
@@ -61,7 +63,7 @@ export function buildWaterSurface(r:HydroRegion,t:TerrainCellPacket,readSet:read
     h??=hydroLevel(r,u,v);if(!Number.isFinite(h))throw new Error('WATER_HEIGHT_UNRESOLVED');
     const k=`${pointKey(p)}/${h}`,old=vertices.get(k);if(old!==undefined)return old;
     if(vertices.size>=L.maxVertices)throw new Error('WATER_VERTEX_BUDGET');
-    const geo=unprojectMercator({u,v}),local=ecefToThreeLocal(geodeticToEcef(geodeticRadians(geo.longitudeRad,geo.latitudeRad,meters(h+.03))),t.anchor);
+    const geo=unprojectMercator({u,v}),local=ecefToThreeLocal(geodeticToEcef(geodeticRadians(geo.longitudeRad,geo.latitudeRad,meters(h+lift))),t.anchor);
     const cl=Math.cos(geo.longitudeRad),sl=Math.sin(geo.longitudeRad),cp=Math.cos(geo.latitudeRad),sp=Math.sin(geo.latitudeRad);
     const normal=enuToThree(rotate(t.anchor.ecefToEnu,vector(cp*cl,cp*sl,sp)));
     const index=vertices.size;vertices.set(k,index);positions.push(...local);normals.push(...normal);
@@ -100,12 +102,13 @@ export function buildWaterSurface(r:HydroRegion,t:TerrainCellPacket,readSet:read
     positions:new Float32Array(positions),normals:new Float32Array(normals),uvs:new Float32Array(uvs),indices:new Uint16Array(indices),
     triangleCount:indices.length/3,areaSquareMeters:area,regionKey:r.key,enclosedLevels:r.basinLevels.size,
     deferredWaterways:r.geometry.deferredWaterways,minLevelMeters:minLevel===Infinity?null:minLevel,maxLevelMeters:maxLevel===-Infinity?null:maxLevel,
-    sourceTiles:r.sourceTiles,readSet,verticalReference:r.verticalReference,heightAuthority:r.heightAuthority,renderLiftMeters:.03,
-    terrainModified:false,collidersAdded:0,swimming:false};validateWaterPacket(packet,t);return packet;
+    sourceTiles:r.sourceTiles,readSet,verticalReference:r.verticalReference,heightAuthority:r.heightAuthority,renderLiftMeters:lift,...(conditioned?{hydroRevision:options.hydroRevision!}:{}),
+    terrainModified:conditioned,collidersAdded:0,swimming:false};validateWaterPacket(packet,t);return packet;
 }
 export function validateWaterPacket(p:WaterPacket,t:TerrainCellPacket):void {
   if(p?.schema!==WATER_VERSION||p.cellKey!==`web-mercator/${t.id.level}/${t.id.x}/${t.id.y}`||p.terrainSourceId!==t.sourceId||
-    p.heightAuthority!=='estimated-not-hydraulically-qualified'||p.verticalReference!==t.verticalReference||p.terrainModified!==false||p.collidersAdded!==0||p.swimming!==false||p.renderLiftMeters!==.03||
+    p.heightAuthority!=='estimated-not-hydraulically-qualified'||p.verticalReference!==t.verticalReference||typeof p.terrainModified!=='boolean'||p.collidersAdded!==0||p.swimming!==false||
+    (p.terrainModified?(p.renderLiftMeters!==0||!p.hydroRevision||!(/^[a-f0-9]{64}$/.test(p.hydroRevision))||!p.terrainSourceId.endsWith(p.hydroRevision)):(p.renderLiftMeters!==.03||p.hydroRevision!==undefined))||
     !(p.positions instanceof Float32Array)||!(p.normals instanceof Float32Array)||!(p.uvs instanceof Float32Array)||!(p.indices instanceof Uint16Array)||
     p.positions.length%3||p.normals.length!==p.positions.length||p.uvs.length!==p.positions.length/3*2||p.positions.length/3>L.maxVertices||
     p.indices.length%3||p.triangleCount!==p.indices.length/3||p.triangleCount>L.maxTriangles||p.indices.some(i=>i>=p.positions.length/3)||
