@@ -27,6 +27,8 @@ jobs:
           git checkout -B fix/pr15b-water-levels FETCH_HEAD
           git apply --unidiff-zero --index /tmp/hydro-levels.patch
           test "$(git write-tree)" = 2c8273e1ce1a62d471d93d75c8c63902d28a8072
+          git restore --source=HEAD --staged --worktree .github/workflows/pr15b-live-review.yml
+          test "$(git write-tree)" = fa81666977f44dddb4e40318b63fd1118a76daaa
           git diff --cached --check
           git config user.name 'Amir-Afkir'
           git config user.email 'afkir202@gmail.com'
