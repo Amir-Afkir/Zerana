@@ -158,6 +158,7 @@ export async function loadMapboxPatch({ cells, subdivisions, token, allowPreview
       for (const cell of cells) { aborted(signal); const texture = buildCellImagery(cell, colourMosaic); textures.set(texture.cellKey, texture); }
     }
     return { source, textures, evidence, snapshotId, attributions, elevationZoom, imageryZoom,
+      decodedHeightBytes: heights.reduce((sum,tile)=>sum+tile.heights.byteLength,0),
       requestCount: httpAttempts, plannedRequestCount: tasks.length + Number(dem.length > 0) + Number(imagery.length > 0), waterFallbackCount: evidence.filter(item => item.waterFallback).length };
   } finally { signal.removeEventListener('abort', stop); session.abort(); }
 }

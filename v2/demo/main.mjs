@@ -1,3 +1,5 @@
+import { prepareRealPatch } from './streaming/real-patch.mjs';
+import { RoadSurfaceView } from './render/road-surface-view.mjs';
 import './style.css';
 import { fixtureEngineeringDiagnostics, fixtureEngineeringSample } from '../src/generation/roads/engineering-fixture.ts';
 import './providers.css';
@@ -50,8 +52,8 @@ function attribution(values){
 }
 async function build(){
   const autoExplore = $('auto-explore').checked;
-  let completed=false;
-  playerSession?.setLoading(true);
+  let completed=false,bootstrap=null,bootstrapAdopted=false,replacingWorld=false;
+  playerSession?.setLoading(true);streamSession?.stop();
   loadController?.abort();
   const request=++requestRevision,controller=new AbortController();loadController=controller;
   const isMapbox=$('source-mode').value==='mapbox';
@@ -62,40 +64,50 @@ async function build(){
     const position=geodeticDegrees(degrees(Number($('longitude').value)),degrees(Number($('latitude').value)),meters(0));
     const subdivisions=Number($('subdivisions').value),level=Number($('level').value),profile=$('profile').value;
     const allowPreview=isMapbox && $('allow-preview').checked,token=isMapbox?resolveMapboxToken($('mapbox-token').value,siteToken):'';
+    const engineering=isMapbox&&$('real-engineering').checked;
+    const config={source:isMapbox?'mapbox':'synthetic',profile,level,subdivisions,allowPreview,token,engineering};
     const ids=terrainPatchCells(position,level,Number($('side').value));
-    const result=isMapbox?await loadMapboxPatch({cells:ids,subdivisions,token,
+    if(engineering)bootstrap=await prepareRealPatch(ids,position,config,controller.signal,(n,total)=>{if(request===requestRevision)status(`Terrain et routes aménagés : ${n}/${total}`);});
+    const result=isMapbox&&!engineering?await loadMapboxPatch({cells:ids,subdivisions,token,
       allowPreview,signal:controller.signal,
       onProgress:(n,total)=>{if(request===requestRevision)status(`Tuiles reçues : ${n}/${total}`);}}):null;
     if(controller.signal.aborted||request!==requestRevision)return;
-    const source=result?.source||syntheticElevation(profile);
-    const sampler=new TerrainSampler(source,undefined,{allowUnresolvedDatumPreview:isMapbox});
+    const source=bootstrap?{id:bootstrap.bundles[0].packet.sourceId,verticalReference:'UNRESOLVED_DATUM_PREVIEW'}:result?.source||syntheticElevation(profile);
+    const sampler=bootstrap?null:new TerrainSampler(source,undefined,{allowUnresolvedDatumPreview:isMapbox});
     // Bounded static diagnostic generation, not an interactive streaming implementation.
-    const next=ids.map(id=>buildTerrainCell(id,sampler,subdivisions));
-    const markerPosition=geodeticRadians(position.longitudeRad,position.latitudeRad,source.heightAt(position));
+    const next=bootstrap?bootstrap.bundles.map(b=>b.packet):ids.map(id=>buildTerrainCell(id,sampler,subdivisions));
+    const markerPosition=geodeticRadians(position.longitudeRad,position.latitudeRad,bootstrap?meters(bootstrap.probeHeight):source.heightAt(position));
     const nextWorld=createGeoAnchor(markerPosition);
     if(controller.signal.aborted||request!==requestRevision)return;
     roadSession?.reset();streamSession?.stop();
+    replacingWorld=true;playerSession.discardGround();
     view.setPatch(next,nextWorld,geodeticToEcef(markerPosition),result?.textures);
+    if(bootstrap){
+      const renderer=new RoadSurfaceView(view);
+      for(const b of bootstrap.bundles)renderer.commit(renderer.stage(view.findCell(b.packet.id),b.roadSurface));
+    }
     packets=next;world=nextWorld;
-    playerSession.install(next,nextWorld,geodeticToEcef(markerPosition),allowPreview);
-    streamSession.install(next,result?.textures,{source:isMapbox?'mapbox':'synthetic',profile,
-      level,subdivisions,allowPreview,token});
+    playerSession.install(next,nextWorld,geodeticToEcef(markerPosition),allowPreview,bootstrap?.prepared);
+    streamSession.install(next,result?.textures,config,bootstrap);bootstrapAdopted=!!bootstrap;
     window.__ZERANA_ENGINEERING_DEBUG__={active:!isMapbox&&profile==='engineering',
       source:source.id,...(!isMapbox&&profile.startsWith('engineering')?{...fixtureEngineeringDiagnostics(),
         spawn:fixtureEngineeringSample(position)}:{})};
-    sourceId=source.id;cacheSize=sampler.size;sampler.clear();
+    sourceId=source.id;cacheSize=sampler?.size||0;sampler?.clear();
     providerReport=result?{snapshotId:result.snapshotId,elevationZoom:result.elevationZoom,imageryZoom:result.imageryZoom,
       requestCount:result.requestCount,waterFallbackCount:result.waterFallbackCount,evidence:result.evidence,
-      verticalReference:source.verticalReference,accuracy:'not-certified'}:null;
+      verticalReference:source.verticalReference,accuracy:'not-certified'}:bootstrap?{engineering:true,requestCount:bootstrap.httpActual,elevationZoom:15,imageryZoom:18,verticalReference:source.verticalReference,accuracy:'not-certified'}:null;
     $('source-badge').textContent=isMapbox?'MAPBOX · RELIEF APPROXIMATIF':'SYNTHÉTIQUE · 1 UNITÉ = 1 MÈTRE';
     $('source-badge').classList.toggle('preview-warning',isMapbox);
     $('attribution').hidden=!isMapbox;$('uv-legend').hidden=isMapbox||!$('wireframe').checked;
-    credits.clear();if(result)attribution(result.attributions);
+    credits.clear();if(result)attribution(result.attributions);if(bootstrap)attribution(bootstrap.bundles.flatMap(b=>b.attributions));
     revision++;rebases=0;modes();view.overview();view.render();refreshMetrics();completed=true;
     document.body.dataset.ready=String(revision);
     status(isMapbox?'Satellite et relief reçus. Altitudes source non certifiées WGS84.':'Prêt. Terrain de test, sans appel fournisseur.');
-  }catch(error){if(request===requestRevision)status(error.name==='AbortError'?'Chargement annulé ; scène précédente conservée.':error.message,true);}
-  finally{if(request===requestRevision){
+  }catch(error){if(request===requestRevision){
+    if(replacingWorld){playerSession.discardGround();streamSession.discardGround();roadSession.reset();view.clearPatch();packets=[];}
+    status(error.name==='AbortError'&&!replacingWorld?'Chargement annulé ; scène précédente conservée.':error.message,true);
+  }}
+  finally{if(bootstrap&&!bootstrapAdopted)bootstrap.pool.dispose();if(request===requestRevision){
     busy=false;$('build').disabled=false;$('cancel-load').hidden=true;playerSession?.setLoading(false);
     if(completed&&autoExplore){
       streamSession.$('stream-network-consent').checked=isMapbox;
@@ -119,6 +131,7 @@ try{
     if(['synthetic','mapbox'].includes(params.get('source')))$('source-mode').value=params.get('source');
     if(['flat','waves','engineering','engineering-raw'].includes(params.get('profile'))&&$('source-mode').value==='synthetic')$('profile').value=params.get('profile');
     if(['15','17','19','21'].includes(params.get('level')))$('level').value=params.get('level');
+    if(params.get('engineering')==='1'&&$('source-mode').value==='mapbox'){$('real-engineering').checked=true;if(!['19','21'].includes(params.get('level')))$('level').value='19';}
   }
   $('provider-options').hidden=$('source-mode').value!=='mapbox';
   $('build-version').textContent=`Préversion · ${buildSha.slice(0,12)}`;
@@ -140,6 +153,7 @@ try{
   };
   $('runtime-tools').append(playerSession.panel,streamSession.panel,roadSession.panel);
   playerSession.autoResume=!manualMode;
+  $('real-engineering').addEventListener('change',()=>{if($('real-engineering').checked){$('level').value='19';$('subdivisions').value='32';}if(!manualMode)void build();});
   $('auto-explore').addEventListener('change',()=>{playerSession.autoResume=$('auto-explore').checked;});
   modes();
   $('source-mode').addEventListener('change',()=>{streamSession.stop();$('provider-options').hidden=$('source-mode').value!=='mapbox';loadController?.abort();if(!manualMode)void build();});

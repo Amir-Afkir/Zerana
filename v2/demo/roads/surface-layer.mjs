@@ -16,7 +16,7 @@ export class RoadSurfaceLayer {
     this.ui.innerHTML='<label class="consent"><input id="road-auto" type="checkbox" /> Routes et chemins automatiques</label><p id="road-surface-status" class="footnote"></p>';
     session.panel.prepend(this.ui);this.toggle=this.ui.querySelector('input');this.status=this.ui.querySelector('p');
     this.toggle.addEventListener('change',()=>this.setEnabled(this.toggle.checked),{signal:session.events.signal});
-    stream.layerPayloadBytes=key=>this.records.get(key)?.bytes||0;
+    stream.layerPayloadBytes=key=>this.records.get(key)?.bundled?0:this.records.get(key)?.bytes||0;
     this.report();
   }
   setEnabled(enabled) {
@@ -71,7 +71,7 @@ export class RoadSurfaceLayer {
   canFit(pending) {
     if(this.bytes+pending.bytes>ROAD_SURFACE_LIMITS.residentBytes){
       const wanted=new Set(this.stream.plan?.wanted.map(i=>i.key)||[]);
-      const victim=[...this.records].filter(([key])=>!wanted.has(key)&&!this.stream.shown.has(key))
+      const victim=[...this.records].filter(([key,r])=>!r.bundled&&!wanted.has(key)&&!this.stream.shown.has(key))
         .sort((a,b)=>a[1].used-b[1].used||a[0].localeCompare(b[0]))[0];
       if(victim){this.release(victim[0]);return false;}
       throw new Error('ROAD_SURFACE_RESIDENCY_BUDGET');
@@ -110,6 +110,19 @@ export class RoadSurfaceLayer {
     // Purge metadata as soon as the owning terrain is evicted/replaced.
     for(const [key,record] of this.records)if(!this.current(record))this.release(key);
     for(const [key,bundle] of this.failures)if(this.stream.loaded.get(key)!==bundle)this.failures.delete(key);
+    // Engineered terrain already owns its road geometry. Adopt metadata only;
+    // never run a second provider request or evict this physical cohort's layer.
+    for(const [key,bundle] of this.stream.loaded){
+      if(bundle.roadSurface&&!this.records.has(key)){
+        const cell=this.view.findCell(bundle.packet.id),handle=cell?.roadSurface;
+        if(handle){
+          handle.mesh.visible=this.enabled;
+          const bytes=roadSurfaceBytes(bundle.roadSurface);
+          this.records.set(key,{key,bundle,cell,handle,bytes,packet:bundle.roadSurface,bundled:true,used:performance.now()});
+          this.bytes+=bytes;this.completed++;
+        }
+      }
+    }
     const shown=this.stream.shown||new Set();
     for(const key of shown){const record=this.records.get(key);if(record){if(!this.lastVisible.has(key)&&record.everVisible)this.reused++;record.everVisible=true;record.used=performance.now();}}
     this.lastVisible=new Set(shown);
@@ -122,7 +135,7 @@ export class RoadSurfaceLayer {
       if(this.pending&&allowGpu&&performance.now()<deadline)this.advance();
       if(!this.suspended&&!this.flight&&!this.pending&&!this.session.active&&performance.now()<deadline&&(!this.session.pool||this.session.pool.available)){
         const wanted=[...(this.stream.plan?.wanted||[])].sort((a,b)=>Number(shown.has(b.key))-Number(shown.has(a.key))||a.priority-b.priority);
-        const interest=wanted.find(i=>this.stream.loaded.has(i.key)&&!this.records.has(i.key)&&this.failures.get(i.key)!==this.stream.loaded.get(i.key));
+        const interest=wanted.find(i=>this.stream.loaded.has(i.key)&&!this.stream.loaded.get(i.key).engineering&&!this.records.has(i.key)&&this.failures.get(i.key)!==this.stream.loaded.get(i.key));
         if(interest){
           const bundle=this.stream.loaded.get(interest.key),cell=this.view.findCell(bundle.packet.id);
           if(cell)void this.dispatch(interest.key,bundle,cell);
@@ -133,13 +146,13 @@ export class RoadSurfaceLayer {
   }
   report() {
     const cells=[...this.records].map(([key,r])=>({key,triangles:r.packet.triangleCount,bytes:r.bytes,
-      geometryId:r.handle.geometry.uuid,visible:r.cell.root.visible&&r.handle.mesh.visible}));
+      geometryId:r.handle.geometry.uuid,bundled:r.bundled===true,terrainSourceId:r.bundle.packet.sourceId,visible:r.cell.root.visible&&r.handle.mesh.visible}));
     window.__ZERANA_ROAD_SURFACE_DEBUG__={enabled:this.enabled,cells,completed:this.completed,reused:this.reused,
       evicted:this.evicted,residentBytes:this.bytes,residentLimit:ROAD_SURFACE_LIMITS.residentBytes,
       pendingBytes:this.pending?.bytes||0,stage:this.pending?.stage||null,inFlight:!!this.flight,error:this.error,
       failedCells:this.failures.size,suspended:this.suspended,sourceCacheBytes:this.sourceCacheBytes,sourceCacheHits:this.sourceCacheHits,
       httpCharged:this.session.charged,httpLimit:this.session.httpLimit,maxStageMs:this.stageMax,
-      widthAuthority:'estimated-horizontal-meters',surfaceAuthority:'visual-on-terrain',collidersAdded:0};
+      widthAuthority:'estimated-horizontal-meters',surfaceAuthority:this.stream.config?.engineering?'engineered-physical-ground':'visual-on-terrain',collidersAdded:0};
     this.status.textContent=this.enabled?`${cells.filter(c=>c.visible).length} cellules routières visibles · largeurs estimées · ${this.session.charged}/${this.session.httpLimit} requêtes vectorielles. ${this.error||''}`:'Surfaces automatiques désactivées. Le diagnostic manuel reste disponible.';
   }
 }

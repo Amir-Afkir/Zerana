@@ -40,12 +40,12 @@ export function parseRoadMetadata(json){
 export class RoadSource {
   // Native WorkerGlobalScope.fetch requires its global receiver, unlike Node mocks.
   constructor(fetcher=(url,init)=>globalThis.fetch(url,init)){this.fetcher=fetcher;this.cache=new WeightedLru(16*1048576,16);this.token=null;this.metadata=null;}
-  async load(cells,token,signal,grant){
+  async load(cells,token,signal,grant,onHttpAttempt=()=>{}){
     if(!isPublicMapboxToken(token)||!Number.isInteger(grant)||grant<0||grant>ROAD_HTTP_LIMIT)throw new Error('ROAD_REQUEST_CONTRACT');
     if(this.token!==token){this.cache.clear();this.metadata=null;this.token=token;}
     let attempts=0;
     const request=async path=>{
-      aborted(signal);if(attempts>=grant)throw new Error('ROAD_HTTP_BUDGET');attempts++;
+      aborted(signal);if(attempts>=grant)throw new Error('ROAD_HTTP_BUDGET');onHttpAttempt();attempts++;
       const controller=new AbortController(),abort=()=>controller.abort();signal.addEventListener('abort',abort,{once:true});
       let timedOut=false;const timer=setTimeout(()=>{timedOut=true;controller.abort();},12000);
       try{

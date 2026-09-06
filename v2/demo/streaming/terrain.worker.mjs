@@ -1,3 +1,4 @@
+import { RealRoadSource } from '../roads/real-road-source.mjs';
 import { TriangleIndex } from '../../src/physics/geometry.ts';
 import { buildTerrainCell } from '../../src/generation/terrain/terrain-builder.ts';
 import { TerrainSampler } from '../../src/generation/terrain/terrain-sampler.ts';
@@ -8,7 +9,7 @@ import { IndexedPacketCache } from './indexed-cache.mjs';
 import { validatePacket, transferBuffers } from './packet.mjs';
 
 const byteCache = new WeightedLru(16 * 1024 * 1024,128);
-let current = null, disk = null;
+let current = null, disk = null, realRoads = null;
 self.onmessage = async ({data}) => {
   if(data.kind==='cancel') { if(current?.revision===data.revision) current.controller.abort(); return; }
   if(data.kind!=='build' || current) return;
@@ -29,6 +30,18 @@ self.onmessage = async ({data}) => {
       if (controller.signal.aborted) throw new DOMException('Cancelled','AbortError');
       self.postMessage({kind:'result',ticket,texture,attributions:result.attributions,evidence:result.evidence,
         attempts,sourceCacheBytes:byteCache.bytes},[texture.rgba.buffer]);
+      return;
+    }
+    if (job.engineering === true && job.source === 'mapbox') {
+      realRoads ||= new RealRoadSource(byteCache);
+      const bundle = await realRoads.build(job,controller.signal,()=>{
+        if(attempts>=job.httpGrant)throw new Error('STREAM_HTTP_BUDGET');attempts++;
+      });
+      bundle.collider=new TriangleIndex(bundle.packet.positions,bundle.packet.indices).snapshot();
+      validatePacket(bundle,job);
+      if(controller.signal.aborted)throw new DOMException('Cancelled','AbortError');
+      self.postMessage({kind:'result',ticket,bundle,attempts,cacheHit:false,
+        generationMs:performance.now()-started,sourceCacheBytes:realRoads.accountedBytes},transferBuffers(bundle));
       return;
     }
     disk ||= new IndexedPacketCache(job.persistent===true);
@@ -57,7 +70,7 @@ self.onmessage = async ({data}) => {
     const code=error?.name==='AbortError'?'ABORTED':message.includes('401')||message.includes('403')?'PROVIDER_AUTH':
       message.includes('STREAM_HTTP_BUDGET')?'STREAM_HTTP_BUDGET':message.includes('TIMEOUT')?'PROVIDER_TIMEOUT':
       message.includes('429')?'PROVIDER_RATE_LIMIT':message.includes('nodata')?'PROVIDER_NODATA':
-      message.includes('404')?'PROVIDER_NOT_FOUND':'STREAM_GENERATION_ERROR';
+      message.includes('404')?'PROVIDER_NOT_FOUND':/^ROAD_[A-Z_]+$/.test(message)?message:'STREAM_GENERATION_ERROR';
     self.postMessage({kind:'error',ticket,code,attempts});
   } finally {current=null;}
 };

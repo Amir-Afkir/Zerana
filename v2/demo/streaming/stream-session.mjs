@@ -1,3 +1,5 @@
+import { assertReadSetsCompatible } from '../../src/generation/roads/snapshot-readset.ts';
+import { ROAD_SURFACE_LIMITS,roadSurfaceBytes } from '../../src/generation/roads/surface.ts';
 import './stream.css';
 import { CellAdmission } from './cell-admission.mjs';
 import { CellScheduler } from '../../src/streaming/scheduler.ts';
@@ -45,13 +47,21 @@ export class StreamSession {
     this.$('stream-toggle').textContent=this.active?'Arrêter le streaming':'Activer le streaming';
     this.$('stream-radius').disabled=this.active;this.$('stream-cache').disabled=this.active;
   }
-  install(packets,textures,config) {
+  install(packets,textures,config,bootstrap=null) {
     this.stop();this.sliding=false;this.recycling=null;this.plan=null;this.config=Object.freeze({...config});this.loaded.clear();
     for(const packet of packets)this.loaded.set(streamCellKey(packet.id),{packet,
       texture:textures?.get(`${packet.id.level}/${packet.id.x}/${packet.id.y}`)||null,evidence:[],attributions:[]});
+    if(bootstrap){
+      this.seedPool=bootstrap;
+      for(const bundle of bootstrap.bundles)this.loaded.set(streamCellKey(bundle.packet.id),bundle);
+    }
     // The small original spawn patch is pinned for safe respawn, with a fixed cap.
     this.shown=new Set(this.loaded.keys());this.seen=new Set(this.shown);
     this.pinned=new Set(this.loaded.keys());this.$('stream-network-option').hidden=config.source!=='mapbox';this.$('stream-network-consent').checked=false;this.error=null;this.buttons();this.report();
+  }
+  discardGround(){
+    this.stop();this.config=null;this.loaded.clear();this.shown?.clear();this.pinned?.clear();this.seen?.clear();
+    this.recycling=null;this.plan=null;this.metricsDirty=false;this.buttons();this.report();
   }
   start() {
     if(!this.config||!this.player.player||this.player.loading||this.disposed)return;
@@ -77,11 +87,12 @@ export class StreamSession {
     this.reused=0;this.windowSwitches=0;this.maxSwitchMs=0;this.waiting=false;this.plan=null;
     this.epoch++;this.active=true;this.error=null;this.nextSelection=0;this.lastReport=0;this.now=0;
     this.scheduler=new CellScheduler();this.cache=new WeightedLru(STREAM_LIMITS.cacheBytes,STREAM_LIMITS.cacheEntries);
-    this.pool=new StreamWorkerPool(this.config.source==='mapbox'?1:Math.max(1,Math.min(2,(navigator.hardwareConcurrency||2)-2)));
+    const seed=this.seedPool;this.seedPool=null;
+    this.pool=seed?.pool||new StreamWorkerPool(this.config.source==='mapbox'?1:Math.max(1,Math.min(2,(navigator.hardwareConcurrency||2)-2)));
     this.admission=null;this.imageFlight=null;this.imageReady=null;this.imageFailures=new Set();this.imageSerial=1000000;
     this.imageryInstalled=0;this.maxStageMs={};this.maxCellWorkMs=0;this.currentCellWorkMs=0;
-    this.httpCharged=0;this.httpActual=0;this.diskHits=0;this.workerCompleted=0;this.evicted=0;
-    this.installed=0;this.peakCells=this.loaded.size;this.peakQueuedBytes=0;this.maxCommitMs=0;this.sourceCacheBytes=0;
+    this.httpCharged=seed?.httpActual||0;this.httpActual=seed?.httpActual||0;this.diskHits=0;this.workerCompleted=0;this.evicted=0;
+    this.installed=0;this.peakCells=this.loaded.size;this.peakQueuedBytes=0;this.maxCommitMs=0;this.sourceCacheBytes=seed?.sourceCacheBytes||0;
     this.persistent=this.$('stream-cache').checked&&this.config.source==='synthetic';
     for(const [key,bundle] of this.loaded)this.scheduler.seed({key,id:bundle.packet.id,priority:0,distanceMeters:0,visible:true,physics:true});
     this.message(this.config.source==='mapbox'?'Streaming Mapbox expérimental : budget 256 requêtes.':this.sliding?'Fenêtre 3×3 active : préparation des voisines.':'Streaming métrique synthétique actif.');
@@ -112,7 +123,7 @@ export class StreamSession {
     this.admission?.cancel();this.admission=null;
     this.imageFlight?.controller.abort();this.imageFlight=null;this.imageReady=null;
     for(const controller of this.controllers.values())controller.abort();this.controllers.clear();
-    this.pool?.dispose();this.scheduler?.dispose();this.cache?.clear();
+    this.pool?.dispose();this.seedPool?.pool.dispose();this.seedPool=null;this.scheduler?.dispose();this.cache?.clear();
     if(reason){this.error=reason;this.message(`Streaming arrêté : ${reason}. Terrain déjà chargé conservé.`);}
     else this.message('Streaming arrêté. Terrain déjà chargé conservé.');
     this.buttons();this.report();
@@ -138,7 +149,7 @@ export class StreamSession {
     let grant=0;
     if(this.config.source==='mapbox') {
       const dem=planRasterTiles([interest.id],Math.min(interest.id.level,15),256,this.config.subdivisions,1);
-      grant=Math.min(2*(dem.length+1),HTTP_LIMIT-this.httpCharged);
+      grant=Math.min(this.config.engineering?128:2*(dem.length+1),HTTP_LIMIT-this.httpCharged);
       if(grant<=0){this.stop('STREAM_HTTP_BUDGET');return;}
       this.httpCharged+=grant; // Reserve worst case BEFORE starting network work.
     }
@@ -158,12 +169,12 @@ export class StreamSession {
     }).catch(error=>{
       if(epoch!==this.epoch||this.disposed)return;
       account(error.attempts);
-      const code=error.message;this.scheduler.fail(ticket,code,this.now,!['ABORTED','PROVIDER_AUTH','PROVIDER_NOT_FOUND','STREAM_HTTP_BUDGET'].includes(code));
-      if(['PROVIDER_AUTH','STREAM_HTTP_BUDGET'].includes(code))this.stop(code);
+      const code=error.message;this.scheduler.fail(ticket,code,this.now,!code.startsWith('ROAD_')&&!['ABORTED','PROVIDER_AUTH','PROVIDER_NOT_FOUND','STREAM_HTTP_BUDGET'].includes(code));
+      if(['PROVIDER_AUTH','ROAD_PROVIDER_AUTH','STREAM_HTTP_BUDGET'].includes(code))this.stop(code);
     }).finally(()=>{if(epoch===this.epoch)this.controllers.delete(ticket.revision);});
   }
   measureStage(stage,ms){
-    if(stage==='upload'||stage==='imagery')this.didGpuWork=true;
+    if(stage==='upload'||stage==='imagery'||stage==='road-upload')this.didGpuWork=true;
     this.maxStageMs[stage]=Math.max(this.maxStageMs[stage]||0,ms);
     this.maxCommitMs=Math.max(this.maxCommitMs,ms);this.currentCellWorkMs+=ms;
   }
@@ -247,6 +258,17 @@ export class StreamSession {
           if(this.loaded.size<STREAM_LIMITS.maxCells&&this.recycling.fits(packetBytes(ready.value))){
             try{
               if(!this.admission){
+                if(ready.value.engineering){
+                  assertReadSetsCompatible(ready.value.engineering.readSet,[...this.loaded.values()].map(b=>b.engineering?.readSet||[]));
+                  const revisions=new Map([...this.loaded.values()].flatMap(b=>(b.engineering?.regions||[]).map(r=>[r.regionKey,r.sourceRevision])));
+                  if(ready.value.engineering.regions.some(r=>revisions.has(r.regionKey)&&revisions.get(r.regionKey)!==r.sourceRevision))throw new Error('ROAD_ENGINEERING_SOURCE_REVISION_CONFLICT');
+                  const resident=[...this.loaded.values()].reduce((n,b)=>n+(b.roadSurface?roadSurfaceBytes(b.roadSurface):0),0);
+                  if(resident+roadSurfaceBytes(ready.value.roadSurface)>ROAD_SURFACE_LIMITS.residentBytes){
+                    const protect=this.protectedKeys(),victim=[...this.loaded.keys()].find(k=>!protect.has(k));
+                    if(victim&&this.scheduler.evictRetained(victim)){this.evict([victim]);return;}
+                    throw new Error('ROAD_SURFACE_RESIDENCY_BUDGET');
+                  }
+                }
                 this.currentCellWorkMs=0;
                 this.admission=new CellAdmission(ready,this.view,(stage,ms)=>this.measureStage(stage,ms));
               }
@@ -319,6 +341,16 @@ export class StreamSession {
       maxCommitMs:this.maxCommitMs||0,peakQueuedBytes:this.peakQueuedBytes||0,
       scheduler:this.scheduler?.snapshot()||null};
     window.__ZERANA_STREAM_DEBUG__=summary;
+    const engineered=[...this.loaded].filter(([,b])=>b.engineering);
+    window.__ZERANA_REAL_ENGINEERING_DEBUG__={active:this.config?.engineering===true,
+      version:'real-ground-engineering-v1',authority:'estimated-game-earthwork',qualifiedForDriving:false,boundaryMode:'fixed-raw-collar',
+      cells:engineered.map(([key,b])=>({key,sourceId:b.packet.sourceId,visible:this.shown?.has(key)||false,
+        maxDeltaMeters:b.engineering.maxDeltaMeters,modifiedSamples:b.engineering.modifiedSamples,
+        triangleCount:b.roadSurface.triangleCount,readSet:b.engineering.readSet,regions:b.engineering.regions})),
+      maxDeltaMeters:Math.max(0,...engineered.map(([,b])=>b.engineering.maxDeltaMeters)),
+      modifiedSamples:engineered.reduce((n,[,b])=>n+b.engineering.modifiedSamples,0),
+      mainThreadBvhBuildCount:summary.mainThreadBvhBuildCount,preparedBvhAdoptions:summary.preparedBvhAdoptions,
+      error:summary.error,httpActual:summary.httpActual,httpLimit:HTTP_LIMIT};
     const rows=[['Visibles / recyclées',`${summary.shownKeys.length} / ${summary.recycledKeys.length}`],['Réactivées sans génération',summary.reused],['Cellules résidentes',`${summary.cells} / ${summary.maxCells}`],['Nouvelles / libérées',`${summary.installed} / ${summary.evicted}`],
       ['Cache mémoire',`${(summary.cacheBytes/1048576).toFixed(2)} Mio`],['Cache disque : hits',summary.diskHits],
       ['Requêtes Mapbox',`${summary.httpActual} / ${HTTP_LIMIT}`],['Étape d’intégration max.',`${summary.maxCommitMs.toFixed(1)} ms`]];
@@ -326,5 +358,5 @@ export class StreamSession {
     if(this.active&&this.sliding&&!summary.scheduler?.errors.length)this.message(this.waiting?'Préparation de la fenêtre suivante ; terrain précédent conservé.':'Fenêtre 3×3 prête. Les cellules quittées restent en recyclage.');
     if(this.active&&summary.scheduler?.errors.length)this.message(`Chargements en erreur : ${summary.scheduler.errors.join(', ')}. Le sol valide est conservé.`);
   }
-  dispose(){this.stop();this.disposed=true;this.loaded.clear();this.seen?.clear();this.events.abort();this.view.onBeforeFrame=null;this.player.beforeRespawn=null;this.panel.remove();window.__ZERANA_STREAM_DEBUG__={disposed:true};}
+  dispose(){this.stop();this.disposed=true;this.loaded.clear();this.seen?.clear();this.events.abort();this.view.onBeforeFrame=null;this.player.beforeRespawn=null;this.panel.remove();window.__ZERANA_STREAM_DEBUG__={disposed:true};window.__ZERANA_REAL_ENGINEERING_DEBUG__={disposed:true};}
 }
