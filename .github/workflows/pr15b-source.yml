@@ -1,0 +1,27 @@
+name: PR15b pinned source
+on:
+  push:
+    branches: [work/pr15b-source]
+permissions:
+  contents: read
+jobs:
+  source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Export immutable tracked source only
+        run: |
+          BASE=fc64a696fe1854e4fe563e07bf7de08592dcd1ea
+          git archive --format=tar.gz "$BASE" > /tmp/pr15b-source.tar.gz
+          git rev-parse "$BASE" "$BASE^{tree}" > /tmp/pr15b-identity.txt
+          sha256sum /tmp/pr15b-source.tar.gz >> /tmp/pr15b-identity.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pr15b-source
+          path: |
+            /tmp/pr15b-source.tar.gz
+            /tmp/pr15b-identity.txt
+          retention-days: 2
