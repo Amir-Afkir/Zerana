@@ -1,3 +1,4 @@
+import { WaterSource } from '../water/source.mjs';
 import { buildEnvironmentPacket } from '../../src/generation/environment/debug-packet.ts';
 import { syntheticEnvironmentTile } from '../environment/synthetic.mjs';
 import { RoadSource,syntheticRoadTiles } from './road-source.mjs';
@@ -6,7 +7,7 @@ import { buildRoadDebugPackets } from '../../src/generation/roads/debug-packet.t
 
 import { buildRoadSurface } from '../../src/generation/roads/surface.ts';
 
-let current=null;const source=new RoadSource();
+let current=null;const source=new RoadSource(),waterSource=new WaterSource();
 self.onmessage=async({data})=>{
   if(data.kind==='cancel'){if(current?.revision===data.revision)current.controller.abort();return;}
   if(data.kind!=='build'||current)return;
@@ -19,7 +20,8 @@ self.onmessage=async({data})=>{
     const graph=buildRoadGraph(result.tiles);
     if(job.mode==='surface'){
       if(job.terrains.length!==1)throw new Error('ROAD_SURFACE_JOB');
-      const surface=buildRoadSurface(graph,job.terrains[0]);
+      let surface=null,surfaceError=null;
+      try{surface=buildRoadSurface(graph,job.terrains[0]);}catch(e){surfaceError=/^ROAD_[A-Z_]+$/.test(e.message)?e.message:'ROAD_SURFACE_FAILURE';}
       let environment=null,environmentError=null;
       try{
         const id=job.terrains[0].id;
@@ -28,10 +30,19 @@ self.onmessage=async({data})=>{
         environmentError=owners.find(t=>t.environmentError)?.environmentError||null;
         if(!environmentError&&tiles.every(Boolean))environment=buildEnvironmentPacket(tiles,job.terrains[0]);
       }catch(e){environmentError=/^ENV_[A-Z_]+$/.test(e.message)?e.message:'ENV_BUILD_FAILED';}
+      let water=null,waterError=null,waterCacheBytes=0,waterAttributions=[];
+      if(job.water===true)try{
+        const tiles=result.tiles.map(t=>job.source==='synthetic'?syntheticEnvironmentTile(t):t.environment);
+        if(tiles.some(t=>!t))throw new Error('WATER_CONTEXT_INCOMPLETE');
+        const w=await waterSource.build({tiles,terrain:job.terrains[0],source:job.source,profile:job.profile,token:job.token,
+          evidence:job.terrainEvidence||[],signal:controller.signal,
+          onAttempt:()=>{if(attempts>=job.httpGrant)throw new Error('WATER_HTTP_BUDGET');attempts++;}});
+        water=w.packet;waterAttributions=w.attributions;waterCacheBytes=w.cacheBytes;
+      }catch(e){waterError=/^WATER_[A-Z_]+$/.test(e.message)?e.message:'WATER_SOURCE_UNAVAILABLE';}
       if(controller.signal.aborted)throw new DOMException('Cancelled','AbortError');
-      self.postMessage({kind:'result',ticket,surface,environment,environmentError,attribution:result.attribution,attempts,
+      self.postMessage({kind:'result',ticket,surface,surfaceError,environment,environmentError,water,waterError,waterCacheBytes,waterAttributions,attribution:result.attribution,attempts,
         summary:{decodedSnapshots:result.decodedSnapshots||0,cacheBytes:result.cacheBytes,cacheHits:result.cacheHits,generationMs:performance.now()-started}},
-        [surface.positions.buffer,surface.normals.buffer,surface.colors.buffer,surface.uvs.buffer,surface.indices.buffer,...(environment?[environment.positions.buffer,environment.colors.buffer]:[])]);
+        [...(surface?[surface.positions.buffer,surface.normals.buffer,surface.colors.buffer,surface.uvs.buffer,surface.indices.buffer]:[]),...(environment?[environment.positions.buffer,environment.colors.buffer]:[]),...(water?[water.positions.buffer,water.normals.buffer,water.uvs.buffer,water.indices.buffer]:[])]);
       return;
     }
     const fragments=clipRoadGraph(graph,ids),packets=buildRoadDebugPackets(graph,job.terrains);

@@ -151,7 +151,8 @@ try{
     terrainFrame(dt);
     const surfaceBusy=!!roadSession.surfaceLayer.pending;
     roadSession.surfaceLayer.update(deadline,!streamSession.didGpuWork&&!streamSession.admission);
-    roadSession.surfaceLayer.environment.update(deadline,!surfaceBusy&&!roadSession.surfaceLayer.pending&&!streamSession.didGpuWork&&!streamSession.admission);
+    const waterBusy=roadSession.surfaceLayer.water.update(deadline,!surfaceBusy&&!roadSession.surfaceLayer.pending&&!streamSession.didGpuWork&&!streamSession.admission);
+    roadSession.surfaceLayer.environment.update(deadline,!waterBusy&&!surfaceBusy&&!roadSession.surfaceLayer.pending&&!streamSession.didGpuWork&&!streamSession.admission);
   };
   $('runtime-tools').append(playerSession.panel,streamSession.panel,roadSession.panel);
   playerSession.autoResume=!manualMode;
