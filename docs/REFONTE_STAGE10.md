@@ -40,6 +40,13 @@ Le cache source reste plafonné à 16 Mio/16 tuiles. Les estimations ne mesurent
 pas la mémoire totale JS ou VRAM du pilote. Le retour vers une cellule retenue
 réutilise sa géométrie routière ; après éviction réelle, elle peut être régénérée.
 
+Le test d'échelle complémentaire mesure la distance ECEF entre les bords du
+ruban dans 36 cas de latitude/direction, indépendamment du calcul des offsets.
+Il vérifie la construction mathématique, pas la précision de la cartographie.
+Sous pression du budget routier, les surfaces non demandées et non visibles
+sont évincées selon leur dernière utilisation ; les compteurs ne sont publiés
+qu'après admission réussie dans le budget global de recyclage.
+
 Les résultats exécutés, les mesures et les limites de validation sont consignés
 dans la PR, pas déduits de la seule présence des tests.
 
