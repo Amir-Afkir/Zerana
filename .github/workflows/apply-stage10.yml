@@ -1,0 +1,40 @@
+name: Stage 10 verified source transfer
+on:
+  push:
+    branches: [work/stage10-source]
+    paths: ['transfer/stage10/**', '.github/workflows/apply-stage10.yml']
+permissions:
+  contents: write
+jobs:
+  transfer:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Verify source payload
+        run: |
+          python - <<'PY'
+          import base64, hashlib, lzma
+          from pathlib import Path
+          encoded = ''.join(Path(f'transfer/stage10/part{i}.b64').read_text() for i in range(5))
+          patch = lzma.decompress(base64.b64decode(encoded, validate=True))
+          assert len(patch) == 77372
+          assert hashlib.sha256(patch).hexdigest() == 'efe7aa7fe580656b2503983155dba8c0d4df10c556ac0d48c436bc8c0fafc834'
+          Path('/tmp/zerana-stage10.patch').write_bytes(patch)
+          PY
+      - name: Apply only to pinned feature branch
+        run: |
+          set -euo pipefail
+          git fetch origin feature/v2-road-surfaces
+          test "$(git rev-parse FETCH_HEAD)" = 'bd8152f91c1166b07181d131afd44668e487db75'
+          git checkout --detach FETCH_HEAD
+          git apply --check --index /tmp/zerana-stage10.patch
+          git apply --index /tmp/zerana-stage10.patch
+          test "$(git write-tree)" = '1aa366e53af409169c8e6ac533a766ffa69bc7bf'
+          test "$(git diff --cached --name-only | wc -l | tr -d ' ')" = '17'
+          git config user.name 'Zerana source transfer'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'feat(v2): add terrain-conforming road surfaces and automatic layer streaming'
+          git push origin HEAD:refs/heads/feature/v2-road-surfaces
