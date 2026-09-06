@@ -19,7 +19,7 @@ const scheme=new MercatorCellScheme();
 export class StreamSession {
   constructor(view,player,onChanged) {
     this.view=view;this.player=player;this.onChanged=onChanged;this.active=false;this.disposed=false;
-    this.loaded=new Map();this.controllers=new Map();this.epoch=0;this.error=null;
+    this.layerPayloadBytes=()=>0;this.loaded=new Map();this.controllers=new Map();this.epoch=0;this.error=null;
     this.events=new AbortController();
     this.panel=document.createElement('section');this.panel.className='stream-panel';
     this.panel.innerHTML=`<h2>Monde continu</h2>
@@ -68,7 +68,7 @@ export class StreamSession {
       const plan=sliding?selectSlidingWindow(position,velocity,this.config.level):selectStreamCells(position,velocity,settings);
       this.checkCapacity(plan);
       recycling=new RecyclingIndex(64,sliding?32*1048576:64*1048576);
-      for(const [key,bundle] of this.loaded)recycling.insert(key,packetBytes(bundle));
+      for(const [key,bundle] of this.loaded)recycling.insert(key,packetBytes(bundle)+this.layerPayloadBytes(key));
     }catch(error){this.message(`${error.message} — choisis un niveau moins fin ou un rayon réduit.`);return;}
     this.player.physics.setCapacity(STREAM_LIMITS.maxCells);
     this.sliding=sliding;this.settings=settings;this.velocity=velocity;this.recycling=recycling;
@@ -181,7 +181,7 @@ export class StreamSession {
         const bytes=packetBytes(next),extra=bytes-packetBytes(bundle);
         if(!this.recycling.fits(extra,0)){this.trimRecycled(extra,0);this.imageReady=result;return;}
         const start=performance.now();this.view.applyTexture(bundle.packet.id,result.texture);
-        this.recycling.resize(result.key,bytes);bundle.texture=result.texture;
+        this.recycling.resize(result.key,bytes+this.layerPayloadBytes(result.key));bundle.texture=result.texture;
         this.imageryInstalled++;this.metricsDirty=true;this.pendingAttributions=result.attributions;
         this.measureStage('imagery',performance.now()-start);
       }catch{this.imageFailures.add(result.key);this.error='STREAM_IMAGERY_ERROR';}

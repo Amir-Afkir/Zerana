@@ -18,6 +18,7 @@ import time
 from urllib.parse import urlsplit, parse_qs, urlencode, urlunsplit
 from playwright.async_api import async_playwright
 from provider_smoke import png, QuietHandler
+from roads_smoke import mvt
 
 ROOT = Path(__file__).resolve().parents[2]
 LIVE = os.getenv('ZERANA_LIVE_STREAM') == '1'
@@ -90,7 +91,9 @@ async def run(url):
                     if parts.path.endswith('.json'):
                         credit = '© <a href="https://www.mapbox.com/about/maps">Mapbox</a> <a href="https://www.mapbox.com/contribute/">Improve this map</a> '
                         credit += '© <a href="https://www.openstreetmap.org/copyright/">OpenStreetMap</a> © <a href="https://www.maxar.com/">Maxar</a>'
-                        await route.fulfill(content_type='application/json', body=json.dumps({'attribution': credit}), headers={'access-control-allow-origin': '*'})
+                        await route.fulfill(content_type='application/json', body=json.dumps({'attribution': credit,'scheme':'xyz','maxzoom':16,'modified':123,'vector_layers':[{'id':'road'}]}), headers={'access-control-allow-origin': '*'})
+                    elif 'mapbox.mapbox-streets-v8/' in parts.path:
+                        await route.fulfill(content_type='application/x-protobuf',body=mvt(),headers={'access-control-allow-origin':'*'})
                     else:
                         await route.fulfill(content_type='image/png', body=png((1,150,136) if 'terrain-rgb/' in parts.path else (70,130,100)), headers={'access-control-allow-origin': '*'})
                 except Exception:

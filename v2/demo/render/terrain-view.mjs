@@ -134,19 +134,22 @@ export class TerrainView{
    * separately instead of claiming a hard millisecond guarantee. */
   warmCell(id){
     const cell=this.findCell(id);if(!cell)throw new Error('MISSING_RENDER_CELL');
+    this.warmMesh(cell.mesh);
+  }
+  warmMesh(source){
     if(!this.warmTarget){
       this.warmTarget=new THREE.WebGLRenderTarget(1,1,{depthBuffer:false});
       this.warmScene=new THREE.Scene();
       for(const object of this.scene.children)if(object.isLight)this.warmScene.add(object.clone());
       this.warmCamera=new THREE.PerspectiveCamera(50,1,.01,50000);
     }
-    const mesh=new THREE.Mesh(cell.mesh.geometry,cell.surfaceMaterial);mesh.frustumCulled=false;
+    const mesh=new THREE.Mesh(source.geometry,source.material);mesh.frustumCulled=false;
     const sphere=mesh.geometry.boundingSphere,extent=Math.max(1,sphere.radius);
     this.warmCamera.position.copy(sphere.center).add(new THREE.Vector3(0,extent*2,extent*2));
     this.warmCamera.lookAt(sphere.center);this.warmScene.add(mesh);
     const previous=this.renderer.getRenderTarget();
     try{
-      if(cell.surfaceMaterial.map)this.renderer.initTexture(cell.surfaceMaterial.map);
+      if(source.material.map)this.renderer.initTexture(source.material.map);
       this.renderer.setRenderTarget(this.warmTarget);this.renderer.render(this.warmScene,this.warmCamera);
     }finally{this.renderer.setRenderTarget(previous);mesh.removeFromParent();}
   }

@@ -2,6 +2,8 @@ import { RoadSource,syntheticRoadTiles } from './road-source.mjs';
 import { buildRoadGraph,clipRoadGraph } from '../../src/generation/roads/kernel.ts';
 import { buildRoadDebugPackets } from '../../src/generation/roads/debug-packet.ts';
 
+import { buildRoadSurface } from '../../src/generation/roads/surface.ts';
+
 let current=null;const source=new RoadSource();
 self.onmessage=async({data})=>{
   if(data.kind==='cancel'){if(current?.revision===data.revision)current.controller.abort();return;}
@@ -12,7 +14,17 @@ self.onmessage=async({data})=>{
     const ids=job.terrains.map(t=>t.id),started=performance.now();
     const result=job.source==='mapbox'?await source.load(ids,job.token,controller.signal,job.httpGrant):{tiles:syntheticRoadTiles(ids),attempts:0,attribution:null,cacheHits:0,cacheBytes:0};
     attempts=result.attempts;
-    const graph=buildRoadGraph(result.tiles),fragments=clipRoadGraph(graph,ids),packets=buildRoadDebugPackets(graph,job.terrains);
+    const graph=buildRoadGraph(result.tiles);
+    if(job.mode==='surface'){
+      if(job.terrains.length!==1)throw new Error('ROAD_SURFACE_JOB');
+      const surface=buildRoadSurface(graph,job.terrains[0]);
+      if(controller.signal.aborted)throw new DOMException('Cancelled','AbortError');
+      self.postMessage({kind:'result',ticket,surface,attribution:result.attribution,attempts,
+        summary:{cacheBytes:result.cacheBytes,cacheHits:result.cacheHits,generationMs:performance.now()-started}},
+        [surface.positions.buffer,surface.normals.buffer,surface.colors.buffer,surface.uvs.buffer]);
+      return;
+    }
+    const fragments=clipRoadGraph(graph,ids),packets=buildRoadDebugPackets(graph,job.terrains);
     if(controller.signal.aborted)throw new DOMException('Cancelled','AbortError');
     const summary={schema:graph.schema,source:job.source,sourceZoom:result.tiles[0]?.z,
       topologyAuthority:graph.topologyAuthority,edges:graph.edges.length,nodes:graph.nodes.length,
