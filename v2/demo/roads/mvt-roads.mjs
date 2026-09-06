@@ -32,7 +32,10 @@ function boundedLines(feature,remaining){
 }
 export function decodeRoadMvt(bytes,id,metadata){
   if(!(bytes instanceof Uint8Array)||bytes.byteLength>MAX_MVT_BYTES)throw new Error('ROAD_RESPONSE_BUDGET');
-  const tile=new VectorTile(new Pbf(bytes)),layer=tile.layers.road;
+  return decodeRoadLayer(new VectorTile(new Pbf(bytes)),id,metadata);
+}
+export function decodeRoadLayer(tile,id,metadata){
+  const layer=tile.layers.road;
   // Missing road layer is a valid empty tile, but metadata must advertise roads.
   if(!layer)return {...metadata,...id,extent:4096,features:[],ignoredGeometries:0,decodedBytes:128};
   if(![1,2].includes(layer.version)||!Number.isInteger(layer.extent)||layer.extent<1||layer.extent>ROAD_LIMITS.maxExtent||layer.length>ROAD_LIMITS.maxFeatures)throw new Error('ROAD_MVT_LAYER');

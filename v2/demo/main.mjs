@@ -149,7 +149,9 @@ try{
   view.onBeforeFrame=dt=>{
     const deadline=performance.now()+STREAM_LIMITS.uploadBudgetMs;
     terrainFrame(dt);
+    const surfaceBusy=!!roadSession.surfaceLayer.pending;
     roadSession.surfaceLayer.update(deadline,!streamSession.didGpuWork&&!streamSession.admission);
+    roadSession.surfaceLayer.environment.update(deadline,!surfaceBusy&&!roadSession.surfaceLayer.pending&&!streamSession.didGpuWork&&!streamSession.admission);
   };
   $('runtime-tools').append(playerSession.panel,streamSession.panel,roadSession.panel);
   playerSession.autoResume=!manualMode;
