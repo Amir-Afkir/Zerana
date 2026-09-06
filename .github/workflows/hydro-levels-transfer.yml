@@ -17,20 +17,17 @@ jobs:
         run: |
           python - <<'PY'
           import base64,gzip,hashlib,pathlib
-          text=''.join(pathlib.Path(f'.transfer/hydro-{i}.b64').read_text().strip() for i in range(8))
-          patch=gzip.decompress(base64.b64decode(text,validate=True))
-          assert hashlib.sha256(patch).hexdigest()=='7849e5bc153922aaac3b74157192416448773977c22ec9f56bce17811bebe1a1'
+          patch=gzip.decompress(base64.b64decode(pathlib.Path('.transfer/refine.b64').read_text().strip(),validate=True))
+          assert hashlib.sha256(patch).hexdigest()=='f49285d4bffeff1b9cb17c874edcc8d208a8105b292e732ef1c44e7096b7a97a'
           pathlib.Path('/tmp/hydro-levels.patch').write_bytes(patch)
           PY
           git fetch origin fix/pr15b-water-levels
-          test "$(git rev-parse FETCH_HEAD)" = decc600b24c8eba1c565a74fa8f9a7c2d9a06cae
+          test "$(git rev-parse FETCH_HEAD)" = b90f1361acb4b1b0e860cafaae4fd3b4f2faf751
           git checkout -B fix/pr15b-water-levels FETCH_HEAD
           git apply --unidiff-zero --index /tmp/hydro-levels.patch
-          test "$(git write-tree)" = 2c8273e1ce1a62d471d93d75c8c63902d28a8072
-          git restore --source=HEAD --staged --worktree .github/workflows/pr15b-live-review.yml
-          test "$(git write-tree)" = fa81666977f44dddb4e40318b63fd1118a76daaa
+          test "$(git write-tree)" = 583be925cb7dbb222d4e3669f73598de70ce5e00
           git diff --cached --check
           git config user.name 'Amir-Afkir'
           git config user.email 'afkir202@gmail.com'
-          git commit -m 'fix(v2): constrain hydro levels upstream and measure water from player view'
+          git commit -m 'fix(v2): localize hydro bounds and guard collision-projected streaming exits'
           git push origin HEAD:refs/heads/fix/pr15b-water-levels
