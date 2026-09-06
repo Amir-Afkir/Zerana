@@ -83,4 +83,17 @@ simulé : chargement sans bouton, modification réelle de la hauteur, BVH prépa
 marche, retour, rebase, annulation et refus fournisseur. Un test séparé doit
 vérifier de vraies données Mapbox avec un plafond d'appels externe. Le SHA
 publié et les rapports seront consignés dans la PR après exécution. La présence
-ce document n'est pas une preuve que le déploiement est déjà validé.
+de ce document n'est pas une preuve que le déploiement est déjà validé.
+
+## Vérification fournisseur réelle
+
+Le marqueur de livraison `[verify-real-engineering-live]` autorise un parcours
+réel séparé, après publication et contrôle du SHA servi. Cinq points fixes
+(Paris, Morvan, Chamonix, Calanques, seconde intersection parisienne) sont
+sondés au niveau 19. Paris inclut 70 m aller/retour et trois rebases. Le plafond
+externe est de 384 tentatives Mapbox au total, au plus 128 par point ; les
+quotas runtime restent inchangés. Ces libellés ne prouvent pas la nature du
+réseau observé ni l'absence de données incomplètes. Au moins un point doit
+produire un terrassement réel non nul. Les autres peuvent signaler des
+alignements refusés et conserver le terrain brut : ce n'est pas une preuve
+que toutes les routes observées sont aménagées.

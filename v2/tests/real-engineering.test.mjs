@@ -108,3 +108,32 @@ test('independently generated adjacent WorldCells share physical engineered grou
  }}finally{physics.dispose();}
  assert.ok(maxError<.15,`measured mesh/analytic error ${maxError}`);t.diagnostic(JSON.stringify({maxError,seams}));
 });
+
+test('independent fixed-region recipes meet through the raw collar without a cell seam',()=>{
+ const raw=source(),east=cellId(16,region.x+1,region.y),g=graph();
+ const recipes=new Map([region,east].map(id=>[`${id.x}/${id.y}`,buildRealEngineeringRegion(id,g,raw,rev)]));
+ const field={...raw,id:'synthetic-multiple-real-recipes',heightAt:p=>{const id=engineeringRegionAt(p);return meters(recipes.get(`${id.x}/${id.y}`).sample(p).heightMeters);}};
+ const ids=[cellId(19,region.x*8+7,region.y*8+4),cellId(19,(region.x+1)*8,region.y*8+4)];
+ const packets=ids.map(id=>{const sampler=new TerrainSampler(field);try{return buildTerrainCell(id,sampler,32);}finally{sampler.clear();}});
+ const seams=measureTerrainSeams(packets,packets[0].anchor);
+ assert.equal(seams.edgePairs,1);assert.ok(seams.maxGapMeters<.001);assert.ok(seams.maxNormalDelta<.001);
+ for(const x of [.9999999,1,1.0000001]){const p=point(x,.5),id=engineeringRegionAt(p);assert.ok(Math.abs(recipes.get(`${id.x}/${id.y}`).sample(p).deltaMeters)<1e-7);}
+});
+
+test('a shallow polyline turn has no nearest-segment height jump at its bisector',()=>{
+ const attributes=normalizeMapboxRoad({class:'primary',type:'primary',structure:'none',layer:0,surface:'paved'});
+ const g=buildRoadGraph([{z:16,x:region.x,y:region.y,extent:4096,providerId:'fixture',version:'1',digest:rev,
+  features:[{attributes,lines:[[[500,2048],[2048,2048],[3500,2100]]]}]}]);
+ const r=buildRealEngineeringRegion(region,g,source(false),rev);assert.ok(r.diagnostics.accepted>0,JSON.stringify(r.diagnostics));
+ let largest=0;
+ for(let y=-30;y<=30;y++){
+  const a=r.sample(point(.5-1e-7,.5+y/4096)),b=r.sample(point(.5+1e-7,.5+y/4096));
+  largest=Math.max(largest,Math.abs(a.heightMeters-b.heightMeters));
+ }
+ assert.ok(largest<.00001,`continuous projection blend difference ${largest}`);
+});
+
+test('malformed source revision cannot establish a geographic recipe identity',()=>{
+ for(const revision of ['', 'not-a-digest', 'g'.repeat(64)])assert.throws(()=>buildRealEngineeringRegion(region,graph(),source(),revision),/CONTRACT/);
+ assert.throws(()=>canonicalReadSet([{layer:'road',tile:'16/02/4',sha256:rev}]),/CONTRACT/);
+});
