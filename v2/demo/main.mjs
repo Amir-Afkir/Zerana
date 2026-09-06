@@ -19,6 +19,7 @@ import { TerrainView } from './render/terrain-view.mjs';
 import { RoadSurfaceLayer } from './roads/surface-layer.mjs';
 import { RoadSession } from './roads/road-session.mjs';
 import { StreamSession } from './streaming/stream-session.mjs';
+import { STREAM_LIMITS } from '../src/streaming/selection.ts';
 import { PlayerSession } from './runtime/player-session.mjs';
 
 const $ = id => document.getElementById(id);
@@ -128,7 +129,7 @@ try{
   roadSession.surfaceLayer=new RoadSurfaceLayer(roadSession,streamSession);
   const terrainFrame=view.onBeforeFrame;
   view.onBeforeFrame=dt=>{
-    const deadline=performance.now()+4;
+    const deadline=performance.now()+STREAM_LIMITS.uploadBudgetMs;
     terrainFrame(dt);
     roadSession.surfaceLayer.update(deadline,!streamSession.didGpuWork&&!streamSession.admission);
   };

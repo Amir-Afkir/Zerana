@@ -71,7 +71,8 @@ export class RoadSurfaceLayer {
   canFit(pending) {
     if(this.bytes+pending.bytes>ROAD_SURFACE_LIMITS.residentBytes){
       const wanted=new Set(this.stream.plan?.wanted.map(i=>i.key)||[]);
-      const victim=[...this.records].find(([key])=>!wanted.has(key)&&!this.stream.shown.has(key));
+      const victim=[...this.records].filter(([key])=>!wanted.has(key)&&!this.stream.shown.has(key))
+        .sort((a,b)=>a[1].used-b[1].used||a[0].localeCompare(b[0]))[0];
       if(victim){this.release(victim[0]);return false;}
       throw new Error('ROAD_SURFACE_RESIDENCY_BUDGET');
     }
@@ -96,8 +97,8 @@ export class RoadSurfaceLayer {
       } else if(stage==='upload') {this.renderer.warm(p.handle);p.stage='commit';}
       else if(stage==='commit') {
         this.renderer.commit(p.handle);
-        this.records.set(p.key,{...p,used:performance.now()});this.bytes+=p.bytes;
         if(this.stream.recycling)this.stream.recycling.resize(p.key,packetBytes(p.bundle)+p.bytes);
+        this.records.set(p.key,{...p,used:performance.now()});this.bytes+=p.bytes;
         this.completed++;this.pending=null;
       }
     } catch(error) {

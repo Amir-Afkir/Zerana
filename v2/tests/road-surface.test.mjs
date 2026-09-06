@@ -10,6 +10,10 @@ import { TerrainSampler } from '../dist/generation/terrain/terrain-sampler.js';
 import { syntheticElevation } from '../dist/generation/terrain/synthetic-elevation.js';
 import { buildTerrainCell } from '../dist/generation/terrain/terrain-builder.js';
 import { cellId } from '../dist/geo/mercator-cell-scheme.js';
+import { geodeticToEcef } from '../dist/geo/ecef.js';
+import { geodeticRadians } from '../dist/geo/geodetic.js';
+import { unprojectMercator } from '../dist/geo/mercator.js';
+import { meters } from '../dist/geo/units.js';
 import { threeLocalToEcef } from '../dist/geo/three-frame.js';
 const props = p => normalizeMapboxRoad({class:'street',type:'residential',structure:'none',layer:0,oneway:'false',surface:'paved',...p});
 const tile=(lines,options={})=>({providerId:'fixture',version:'1',digest:'0'.repeat(64),z:16,x:32768,y:32768,extent:4096,
@@ -110,10 +114,22 @@ test('antimeridian surface pieces remain in their cell and match after ECEF tran
 });
 test('surface packet rejects wrong terrain, stale policy, NaNs and oversized data',()=>{
  const t=terrain(),p=mesh([[[0,1024],[4096,1024]]],t);
- for(const change of [{terrainSourceId:'other'},{styleVersion:'other'},{cellKey:'other'},{positions:new Float32Array([NaN])}])assert.throws(()=>validateRoadSurface({...p,...change},t),/CONTRACT/);
+ for(const change of [{terrainSourceId:'other'},{styleVersion:'other'},{cellKey:'other'},{positions:new Float32Array([NaN])},{primitiveCount:NaN},{junctionCount:1e9},{estimatedWidthCount:-1},{colors:new Float32Array(p.colors.length).fill(2)}])assert.throws(()=>validateRoadSurface({...p,...change},t),/CONTRACT/);
 });
 test('empty road coverage is a valid terminal ready packet',()=>{
  const p=buildRoadSurface(buildRoadGraph([]),terrain());assert.equal(p.triangleCount,0);assert.equal(p.widthAuthority,'estimated-horizontal-meters');
 });
 
 test('explicit ground with missing drawing layer can render without inventing a graph stratum',()=>assert.ok(resolveRoadSurfaceStyle(props({layer:null}))));
+
+// Independent measurement: ECEF endpoint distance, not inversion of metricAt.
+test('horizontal widths measured in ECEF across 36 latitude/direction cases',()=>{
+ const ecef=p=>{const g=unprojectMercator({u:p[0],v:p[1]});return geodeticToEcef(geodeticRadians(g.longitudeRad,g.latitudeRad,meters(0)));};
+ for(const y of [0,4000,14000,25000,32768,43000,52000,62000,65535])for(const slope of [0,.5,1,2]){
+  const g=buildRoadGraph([tile([[[0,1200],[600,1200+600*slope]]],{y})]);
+  const f=roadFootprints(g,cellId(17,65536,y*2)).find(p=>!p.key.startsWith('node/'));
+  const a=ecef(f.polygon[0]),b=ecef(f.polygon.at(-1));
+  const width=Math.hypot(b.xMeters-a.xMeters,b.yMeters-a.yMeters,b.zMeters-a.zMeters);
+  assert.ok(Math.abs(width-5.5)<.00001,`${y}/${slope}: ${width}`);
+ }
+});

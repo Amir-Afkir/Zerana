@@ -3,7 +3,7 @@ import { validateTerrainGrid } from '../terrain/lattice.js';
 import type { RoadGraph } from './model.js';
 import { roadCellKey } from './kernel.js';
 import { ROAD_STYLE_VERSION } from './surface-style.js';
-import { roadFootprints } from './footprint.js';
+import { roadFootprints, FOOTPRINT_LIMITS } from './footprint.js';
 import type { RoadSurfaceStyle } from './surface-style.js';
 import { signedArea, partitionConvex, intersectConvex } from './convex.js';
 import type { Point2, ConvexPolygon } from './convex.js';
@@ -113,6 +113,10 @@ export function validateRoadSurface(p: RoadSurfacePacket, t: TerrainCellPacket):
       p.positions.length % 9 !== 0 || p.positions.length / 3 > ROAD_SURFACE_LIMITS.maxVertices ||
       p.normals.length !== p.positions.length || p.colors.length !== p.positions.length ||
       p.uvs.length * 3 !== p.positions.length * 2 || p.triangleCount !== p.positions.length / 9 ||
+      ![p.primitiveCount,p.junctionCount,p.estimatedWidthCount].every(n => Number.isSafeInteger(n) && n >= 0) ||
+      p.primitiveCount > FOOTPRINT_LIMITS.maxPrimitives || p.junctionCount > p.primitiveCount ||
+      p.estimatedWidthCount !== p.primitiveCount ||
+      p.colors.some(v => v < 0 || v > 1) ||
       !Array.isArray(p.sourceTiles) || p.sourceTiles.length > 16 || p.sourceTiles.some(s => typeof s !== 'string' || s.length > 128) ||
       ![p.positions, p.normals, p.colors, p.uvs].every(a => a.every(Number.isFinite)) ||
       p.uvs.some(v => v < -1e-7 || v > 1 + 1e-7) || roadSurfaceBytes(p) > ROAD_SURFACE_LIMITS.maxBytes)
