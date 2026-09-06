@@ -1,0 +1,28 @@
+name: Stage 11 baseline export
+on:
+  push:
+    branches: [work/stage11-baseline]
+    paths: ['.github/workflows/stage11-baseline.yml']
+permissions:
+  contents: read
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 7ad70eeddf993a5a0d9486da71f3e5c62b452700
+          persist-credentials: false
+      - name: Export tracked files only
+        run: |
+          git archive --format=tar HEAD | gzip > /tmp/zerana-stage11-source.tar.gz
+          git rev-parse HEAD > /tmp/zerana-stage11-head.txt
+          sha256sum /tmp/zerana-stage11-source.tar.gz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stage11-baseline-source
+          path: |
+            /tmp/zerana-stage11-source.tar.gz
+            /tmp/zerana-stage11-head.txt
+          retention-days: 1
