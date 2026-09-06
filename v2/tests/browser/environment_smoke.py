@@ -55,7 +55,7 @@ READY = '''() => { const e=window.__ZERANA_ENVIRONMENT_DEBUG__,s=window.__ZERANA
 async def run(base):
     OUTPUT.mkdir(parents=True,exist_ok=True)
     report={'mode':'LIVE_ENVIRONMENT_KERNEL' if LIVE else 'MOCKED_ENVIRONMENT_KERNEL','success':False,'checks':[],'requestLimit':LIMIT if LIVE else 0}
-    attempts=[];vectors=[];errors=[];unexpected=[];http_errors=[];state={'bad':False,'blocked':False};gate=asyncio.Event();gate.set()
+    attempts=[];vectors=[];errors=[];unexpected=[];http_errors=[];state={'bad':False,'blocked':False};gate=asyncio.Event();gate.set();blocked=asyncio.Event()
     async with async_playwright() as p:
         options={'headless':True,'args':['--no-sandbox','--use-gl=angle','--use-angle=swiftshader','--enable-unsafe-swiftshader']}
         if os.getenv('CHROMIUM_PATH'):options['executable_path']=os.environ['CHROMIUM_PATH']
@@ -75,7 +75,9 @@ async def run(base):
                         unexpected.append('token-fingerprint');await route.abort();return
                     attempts.append(parts.path);await route.continue_();return
                 try:
-                    if vector and state['blocked']:await asyncio.wait_for(gate.wait(),30)
+                    if vector and state['blocked']:
+                        blocked.set()
+                        await asyncio.wait_for(gate.wait(),30)
                     if parts.path.endswith('.json'):
                         body=json.dumps({'scheme':'xyz','maxzoom':16,'modified':123,'vector_layers':[{'id':x} for x in ['road','water','waterway','landuse','landuse_overlay']],
                           'attribution':'© <a href="https://www.mapbox.com/about/maps">Mapbox</a> © <a href="https://www.openstreetmap.org/copyright/">OpenStreetMap</a>'})
@@ -94,10 +96,18 @@ async def run(base):
             assert d['stream']['loadedBytes']<=d['stream']['maxResidentPayloadBytes']
             assert d['env']['terrainModified'] is False and d['env']['hydroAuthority']=='unresolved'
             return d
+        async def select_source(mode):
+            # build() yields to requestAnimationFrame before replacing the world.
+            # A previous world's ready/error report is not the new world's state.
+            previous=await page.evaluate('window.__ZERANA_TERRAIN_DEBUG__?.revision||0')
+            await page.select_option('#source-mode',mode)
+            await page.wait_for_function('''a => window.__ZERANA_TERRAIN_DEBUG__?.revision>a.revision &&
+              window.__ZERANA_STREAM_DEBUG__?.source===a.source && window.__ZERANA_STREAM_DEBUG__?.active''',
+              arg={'revision':previous,'source':mode},timeout=120000)
         async def mapbox(lon,lat):
             await page.locator('#world-options').evaluate('(e)=>e.open=true')
             await page.fill('#longitude',str(lon));await page.fill('#latitude',str(lat))
-            await page.select_option('#source-mode','mapbox')
+            await select_source('mapbox')
             return await ready()
         try:
             await page.goto(query(base,source='synthetic',level='19',environment='1'),wait_until='domcontentloaded')
@@ -110,7 +120,7 @@ async def run(base):
                 # Actual water edge and park semantics; no claim of physical water.
                 for name,lon,lat in [('seine',2.351,48.854),('tuileries',2.333,48.863)]:
                     if report['probes']:
-                        await page.select_option('#source-mode','synthetic');await ready()
+                        await select_source('synthetic');await ready()
                     d=await mapbox(lon,lat)
                     assert d['env']['decodedSnapshots']>0 and d['road']['httpCharged']>0
                     assert any(c['fragmentCount']>0 for c in d['env']['cells'])
@@ -126,7 +136,7 @@ async def run(base):
                 await page.locator('#viewport').click(position={'x':700,'y':550})
                 await walk(page,'ArrowRight',70);forward=await ready();assert forward['stream']['installed']>initial['stream']['installed']
                 await walk(page,'ArrowLeft',70);back=await ready();found={c['key']:c['geometryId'] for c in back['env']['cells']}
-                assert all(found[k]==v for k,v in original.items() if k in found) and back['env']['reused']>0
+                assert all(found[k]==v for k,v in original.items()) and back['env']['reused']>0
                 assert back['player']['state']['grounded'];report['checks'].append('native-walk-return-reuses-environment-geometries-with-bounded-residency')
                 await page.keyboard.press('Escape');await page.locator('#diagnostics').evaluate('(e)=>e.open=true')
                 for _ in range(3):await page.click('#rebase')
@@ -145,13 +155,17 @@ async def run(base):
                 report['checks'].append('roads-water-landuse-share-one-decode-and-one-request-per-cached-tile')
                 await page.click('#overview');await page.wait_for_timeout(200);await page.screenshot(path=str(OUTPUT/'environment.png'))
                 state['bad']=True
-                await page.select_option('#source-mode','synthetic');await ready();await page.select_option('#source-mode','mapbox')
+                await select_source('synthetic');await ready();await select_source('mapbox')
                 await page.wait_for_function('''() => {const r=window.__ZERANA_ROAD_SURFACE_DEBUG__,s=window.__ZERANA_STREAM_DEBUG__;return s?.active&&s.shownKeys.length===9&&s.shownKeys.every(k=>r?.cells.some(c=>c.key===k));}''',timeout=90000)
                 bad=await page.evaluate(STATE);assert bad['env']['error']=='ENV_MVT_CLOSE';assert not bad['road']['error'];assert bad['stream']['active']
                 report['checks'].append('invalid-water-geometry-cannot-disable-valid-roads-or-physical-ground')
-                state.update(bad=False,blocked=True);gate.clear()
-                await page.select_option('#source-mode','synthetic');await ready();await page.select_option('#source-mode','mapbox')
-                await page.wait_for_timeout(500);await page.select_option('#source-mode','synthetic');gate.set();state['blocked']=False
+                state['bad']=False
+                await select_source('synthetic');await ready()
+                state['blocked']=True;gate.clear();blocked.clear()
+                await page.select_option('#source-mode','mapbox')
+                # Prove a vector request is actually in flight, not a timed guess.
+                await asyncio.wait_for(blocked.wait(),30)
+                await select_source('synthetic');gate.set();state['blocked']=False
                 final=await ready();assert final['env']['cells'] and not final['env']['error'];assert final['stream']['active']
                 report['checks'].append('cancelled-provider-work-cannot-attach-to-the-replacement-world')
             assert not errors and not unexpected and not http_errors
