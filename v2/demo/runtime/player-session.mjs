@@ -81,12 +81,15 @@ export class PlayerSession {
     this.$('player-respawn').disabled = this.loading || !this.player;
     this.$('player-toggle').textContent = this.active ? 'Pause' : 'Marcher';
   }
-  install(packets, frame, origin, allowPreview) {
-    this.pause(); this.physics?.dispose(); this.player = null; this.physics = null;
+  discardGround() {
+    this.pause();this.physics?.dispose();this.physics=null;this.player=null;this.root.visible=false;this.buttons();this.report();
+  }
+  install(packets, frame, origin, allowPreview, prepared) {
+    this.discardGround();
     this.root.visible = false; this.origin = origin; this.rebases = 0; this.runtimeError = null;
     this.clock = new FixedClock();
     try {
-      this.physics = new TerrainPhysics(packets, frame, { allowPreview });
+      this.physics = new TerrainPhysics(packets, frame, { allowPreview, prepared });
       this.player = new MetricPlayer(origin, frame, this.physics);
       this.$('player-status').textContent = allowPreview
         ? 'Marche expérimentale sur le terrain affiché. Altitudes absolues non certifiées.'

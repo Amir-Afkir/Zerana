@@ -44,7 +44,7 @@ export class TerrainPhysics implements PhysicsWorld {
   private maxCells: number;
   private readonly allowPreview: boolean;
   readonly altitudeAuthority: 'ellipsoidal'|'preview-only';
-  constructor(packets: readonly TerrainCellPacket[],anchor: GeoAnchor,options: {allowPreview?:boolean;maxCells?:number}={}){
+  constructor(packets: readonly TerrainCellPacket[],anchor: GeoAnchor,options: {allowPreview?:boolean;maxCells?:number;prepared?:ReadonlyMap<TerrainCellPacket,TriangleIndex>}={}){
     this.maxCells=options.maxCells??9;this.allowPreview=options.allowPreview===true;this.frame=anchor;
     if(!Number.isInteger(this.maxCells)||this.maxCells<1||this.maxCells>64) throw new RangeError('Invalid collider capacity');
     if(!packets.length||packets.length>this.maxCells) throw new RangeError('Terrain collider capacity exceeded');
@@ -58,10 +58,12 @@ export class TerrainPhysics implements PhysicsWorld {
     }
     this.count=packets.reduce((n,p)=>n+p.indices.length/3,0);
     if(this.count>COLLISION.maxTriangles) throw new RangeError('Collision budget exceeded; reduce subdivisions');
-    this.built=packets.length;
+    this.built=packets.length;this.adopted=packets.filter(p=>options.prepared?.has(p)).length;
     this.colliders=packets.map(p=>{
       const cell=createGeoAnchor(p.anchor.geodetic);
-      return {packet:p,anchor:cell,index:new TriangleIndex(p.positions,p.indices),toCell:frameTransform(anchor,cell),fromCell:frameTransform(cell,anchor)};
+      return {packet:p,anchor:cell,index:(()=>{const index=options.prepared?.get(p)??new TriangleIndex(p.positions,p.indices);
+        if(!(index instanceof TriangleIndex)||index.triangleCount!==p.indices.length/3)throw new Error('INVALID_PREPARED_COLLIDER');
+        return index;})(),toCell:frameTransform(anchor,cell),fromCell:frameTransform(cell,anchor)};
     });
   }
   /** Publish an incremental set atomically; unchanged packets retain their BVHs.
