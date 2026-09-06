@@ -188,3 +188,27 @@ test('point and direction frame changes do not confuse velocity with translation
   player.rebase(next);assert.deepEqual(player.state.velocityEcefMetersPerSecond,state.velocityEcefMetersPerSecond);
   assert(distance(ecefToThreeLocal(state.ecefPosition,next),expected)<1e-6);
 });
+
+test('streaming edge rejects a collision projection beyond the supported input endpoint',()=>{
+  const {player,physics}=setup([plane(3)]),before=player.state.ecefPosition;
+  const original=physics.move.bind(physics);let projected=false;
+  physics.move=(cap,delta)=>{
+    const result=original(cap,delta);projected=true;
+    return {...result,position:[3.01,result.position[1],result.position[2]],normals:[[0,1,0]]};
+  };
+  player.step(1/60,{...idle,right:1});assert.ok(projected);
+  assert.deepEqual(player.state.ecefPosition,before);
+  assert.equal(player.state.boundaryBlocked,true);assert.equal(player.state.grounded,true);
+  assert.deepEqual(player.state.velocityEcefMetersPerSecond,[0,0,0]);
+  physics.move=original;player.step(1/60,{...idle,right:1});
+  assert.ok(ecefToThreeLocal(player.state.ecefPosition,anchor)[0]>.05);
+  assert.equal(player.state.boundaryBlocked,false);
+});
+
+test('repeated unsupported slide results cannot leak vertical gravity below the world',()=>{
+  const {player,physics}=setup([plane(3)]),before=player.state.ecefPosition;
+  const original=physics.move.bind(physics);
+  physics.move=(cap,delta)=>({...original(cap,delta),position:[3.1,cap.foot[1]-.01,0],normals:[[0,1,0]]});
+  for(let i=0;i<600;i++)player.step(1/60,{...idle,right:1});
+  assert.deepEqual(player.state.ecefPosition,before);assert.equal(player.state.grounded,true);
+});

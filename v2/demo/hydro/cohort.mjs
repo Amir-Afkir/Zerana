@@ -14,6 +14,10 @@ export function validateHydroCohort(bundle){
     !(bundle.rawHeightsMeters instanceof Float64Array)||bundle.rawHeightsMeters.length!==p.heightsMeters.length||!bundle.rawHeightsMeters.every(Number.isFinite)||
     h.depthAuthority!=='preview-artificial-hydro-clearance'||bundle.water?.hydroRevision!==h.revision||bundle.water?.terrainModified!==true||
     JSON.stringify(h.readSet)!==JSON.stringify(bundle.water.readSet)||JSON.stringify(h.readSet)!==JSON.stringify(bundle.evidence))throw new Error('HYDRO_COHORT_CONTRACT');
+  if(h.levelAuthority!=='bank-constrained-lower-envelope-preview'||
+    (bundle.water.triangleCount>0&&(!Number.isFinite(h.maxWaterAboveRawTerrainMeters)||!Number.isFinite(h.certificate.maxWaterAboveTerrainMeters)))||
+    (bundle.water.enclosedLevels===0&&h.maxWaterAboveRawTerrainMeters!==null&&h.maxWaterAboveRawTerrainMeters>HYDRO_POLICY.numericalToleranceMeters))
+    throw new Error('HYDRO_ELEVATION_ENVELOPE_CONTRACT');
   validateWaterPacket(bundle.water,p);validateRoadSurface(bundle.roadSurface,p);validateEnvironmentPacket(bundle.environment,p);
   assertWaterReadSets(h.readSet,[]);
   if(bundle.water.triangleCount>0&&(!h.certificate.testedIntersections||!h.certificate.testedVertices))throw new Error('HYDRO_PROOF_EMPTY');

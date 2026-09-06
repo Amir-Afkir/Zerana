@@ -1,3 +1,5 @@
+import { geodeticToEcef } from '../../src/geo/ecef.ts';
+import { ecefToThreeLocal } from '../../src/geo/three-frame.ts';
 import { RoadSource } from '../roads/road-source.mjs';
 import { loadMapboxPatch } from '../providers/mapbox-raster.mjs';
 import { WeightedLru } from '../../src/streaming/weighted-lru.ts';
@@ -78,7 +80,7 @@ export class HydroSource {
     // Geometry, numeric views, decoded DEM and nodal cache are all charged.
     const pointCount=geometry.reduce((s,g)=>s+g.primitives.reduce((n,p)=>n+p.polygon.length,0),0);
     const owner=completeTiles[ownerIndex];
-    const estimate=(raw.decodedHeightBytes||0)+pointCount*256+tiles.reduce((s,t)=>s+t.pointCount*192,0)+owner.pointCount*192+graph.edges.length*1200+graph.nodes.length*256+786432;
+    const estimate=(raw.decodedHeightBytes||0)+region.levels.byteLength+pointCount*256+tiles.reduce((s,t)=>s+t.pointCount*192,0)+owner.pointCount*192+graph.edges.length*1200+graph.nodes.length*256+786432;
     const result={key,revision,reads,source,raw:raw.source,region,profile,graph,tiles:[owner],deferredStructures:crossings.deferredStructures,
       attributions:[...raw.attributions,data.attribution],estimatedBytes:estimate};
     abort(signal);if(!this.regions.set(key,result,estimate))throw new Error('HYDRO_REGION_BUDGET');this.built++;
@@ -96,12 +98,20 @@ export class HydroSource {
     const water=buildWaterSurface(r.region,packet,r.reads,{hydroRevision:r.revision});
     const certificate=certifyHydroTriangles(packet,water);
     if(!certificate.passed)throw new Error('HYDRO_TRIANGLE_CONFLICT');
-    const rawHeightsMeters=new Float64Array(packet.heightsMeters.length);let maxLoweringMeters=0,modifiedSamples=0;
+    const rawPositions=new Float32Array(packet.positions.length),rawHeightsMeters=new Float64Array(packet.heightsMeters.length);let maxLoweringMeters=0,modifiedSamples=0;
     for(let y=0;y<=32;y++)for(let x=0;x<=32;x++){
       const g=unprojectMercator({u:(job.id.x*32+x)/2**(job.id.level+5),v:(job.id.y*32+y)/2**(job.id.level+5)}),i=y*33+x;
       rawHeightsMeters[i]=r.raw.heightAt(geodeticRadians(g.longitudeRad,g.latitudeRad,meters(0)));
+      rawPositions.set(ecefToThreeLocal(geodeticToEcef(geodeticRadians(g.longitudeRad,g.latitudeRad,meters(rawHeightsMeters[i]))),packet.anchor),i*3);
       const d=rawHeightsMeters[i]-packet.heightsMeters[i];maxLoweringMeters=Math.max(maxLoweringMeters,d);if(d>1e-7)modifiedSamples++;
     }
+    const rawCertificate=certifyHydroTriangles({...packet,positions:rawPositions},water);
+    const maxWaterAboveRawTerrainMeters=rawCertificate.maxWaterAboveTerrainMeters;
+    // Closed standing bodies may have a genuinely lower interior DEM. Their
+    // bank envelope (not their bottom) constrains the level. Other bodies must
+    // not introduce positive water-over-raw gaps; confirm the rendered result.
+    if(!r.region.geometry.basins.length && maxWaterAboveRawTerrainMeters!==null && maxWaterAboveRawTerrainMeters>HYDRO_POLICY.numericalToleranceMeters)
+      throw new Error('HYDRO_WATER_ABOVE_RAW_TERRAIN');
     // Keep known bridge/tunnel strata out of the ground renderer. A road whose
     // centreline enters water is not silently converted to a ford or sunken road.
     // Record the ambiguity; this PR creates neither decks nor tunnels.
@@ -115,7 +125,7 @@ export class HydroSource {
     return {packet,roadSurface,water,environment,rawHeightsMeters,texture:null,snapshotId,probeHeight,
       evidence:r.reads,attributions:r.attributions,
       hydro:{version:HYDRO_VERSION,revision:r.revision,region:r.key,readSet:r.reads,
-        policy:HYDRO_POLICY,certificate,maxLoweringMeters,modifiedSamples,deferredStructures,
+        policy:HYDRO_POLICY,certificate,maxWaterAboveRawTerrainMeters,levelAuthority:'bank-constrained-lower-envelope-preview',maxLoweringMeters,modifiedSamples,deferredStructures,
         structureStatus:deferredStructures?'STRUCTURE_REQUIRED':'none',
         kinds:[...new Set(r.profile.footprints.map(f=>f.kind))].sort(),
         depthAuthority:'preview-artificial-hydro-clearance',generationMs:performance.now()-start}};

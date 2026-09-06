@@ -20,6 +20,8 @@ export interface WaterGeometry {
 }
 export interface HydroRegion {
   readonly key:string; readonly z:number; readonly x:number; readonly y:number;
+  /** Conditioned preview can use a finer fixed grid without changing legacy water. */
+  readonly gridDivisions?:16|64;
   readonly levels:Float64Array; readonly basinLevels:ReadonlyMap<string,number>;
   readonly geometry:WaterGeometry; readonly sourceTiles:readonly string[];
   readonly verticalReference:HeightReference;

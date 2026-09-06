@@ -4,7 +4,7 @@ import { WGS84 } from '../../geo/wgs84.js';
 import { meters } from '../../geo/units.js';
 import type { TerrainHeightSource, HeightReference } from '../terrain/elevation-source.js';
 
-export const HYDRO_VERSION = 'hydro-conditioned-v1';
+export const HYDRO_VERSION = 'hydro-conditioned-v2';
 export type HydroKind = 'CLOSED_STANDING_WATER' | 'FLOWING_WATER' | 'LINEAR_WATERWAY' | 'COASTAL_OPEN_WATER' | 'UNRESOLVED';
 export type Point2 = readonly [number, number];
 export interface HydroFootprint {
@@ -33,6 +33,10 @@ export const HYDRO_POLICY = Object.freeze({
   linearClearanceMeters: 0.25,
   openClearanceMeters: 0.5,
   maxLoweringMeters: 12,
+  // A geographic PROFILE constraint, not a render offset: stay below the raw
+  // elevation envelope at banks/open-water supports before carving the bed.
+  waterEmbedMeters: 0.1,
+  profileGridDivisions: 64,
   maxFootprints: 16384,
   maxPoints: 131072,
   maxSampleTests: 150000,

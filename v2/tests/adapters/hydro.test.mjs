@@ -12,7 +12,7 @@ import { prepareWaterGeometry } from '../../demo/water/prepare.mjs';
 import { TriangleIndex } from '../../src/physics/geometry.ts';
 const token='pk.hydro-fixture',z=16,x=32768,y=32768;
 const signal=()=>new AbortController().signal;
-const sourceHeight={id:'mapbox.terrain-rgb/fixture',verticalReference:'UNRESOLVED_DATUM_PREVIEW',provenance:'estimated',heightAt:()=>10};
+const sourceHeight={id:'mapbox.terrain-rgb/fixture',verticalReference:'UNRESOLVED_DATUM_PREVIEW',provenance:'estimated',heightAt:()=>10,heightBounds:()=>({minimumMeters:10,maximumMeters:10})};
 function context(){return Array.from({length:9},(_,i)=>{
  const xx=x+i%3-1,yy=y+Math.floor(i/3)-1;
  const environment=canonicalizeEnvironmentTile({z,x:xx,y:yy,providerId:'fixture',version:'1',digest:'a'.repeat(64),layers:[
@@ -32,8 +32,10 @@ async function build(f,dx=3,sig=signal(),consume=()=>{}){const b=await f.source.
 test('hydro adapter: a complete ground/water/collider cohort is constructed before admission',async()=>{
  const f=fixture(),b=await build(f);validatePacket(b,job());validateHydroCohort(b);
  assert.ok(b.hydro.modifiedSamples>0);assert.ok(b.hydro.certificate.maxTerrainAboveWaterMeters<-.49);
+ assert.ok(b.hydro.maxWaterAboveRawTerrainMeters<-.09);
+ assert.ok(b.hydro.certificate.maxWaterAboveTerrainMeters<.501);
  assert.equal(b.water.terrainSourceId,b.packet.sourceId);assert.equal(b.water.renderLiftMeters,0);assert.ok(packetBytes(b)<=1048576);
- assert.ok(b.rawHeightsMeters.every(h=>h===10));assert.ok(b.packet.heightsMeters.every(h=>h===9.5));
+ assert.ok(b.rawHeightsMeters.every(h=>h===10));assert.ok(b.packet.heightsMeters.every(h=>Math.abs(h-9.4)<1e-12));
  const snapshot=new TriangleIndex(b.packet.positions,b.packet.indices).snapshot();assert.deepEqual(snapshot,b.collider);
 });
 test('hydro adapter: adjacent cells and recycling share the source and water revision with no HTTP',async()=>{
@@ -68,7 +70,7 @@ test('hydro profiles: closed lake levels use banks, not a raised DEM interior',(
  const tiles=context().map(t=>t.environment);const center=tiles.find(t=>t.x===x&&t.y===y);
  const modified=canonicalizeEnvironmentTile({z,x,y,providerId:'fixture',version:'1',digest:'a'.repeat(64),layers:[{name:'water',extent:4096,state:'present',features:[{sourceIndex:0,geometry:'polygon',attributes:normalizeMapboxEnvironment('water',{}),paths:[[[512,512],[3584,512],[3584,3584],[512,3584]]]}]}]});
  const all=tiles.map(t=>t===center?modified:{...t,features:[]});const p=buildWaterSurfaceProfile(all,all.map(prepareWaterGeometry),sourceHeight,'a'.repeat(64));
- assert.equal(p.footprints.filter(f=>f.kind==='CLOSED_STANDING_WATER').length,1);assert.equal(p.footprints[0].level,10);
+ assert.equal(p.footprints.filter(f=>f.kind==='CLOSED_STANDING_WATER').length,1);assert.equal(p.footprints[0].level,9.9);
 });
 
 test('hydro cache: pruning far road context preserves all 64 child-cell footprints including border joins',async()=>{
@@ -84,4 +86,38 @@ test('hydro cache: pruning far road context preserves all 64 child-cell footprin
  for(let dy=0;dy<8;dy++)for(let dx=0;dx<8;dx++){
   const id=cellId(19,x*8+dx,y*8+dy);assert.deepEqual(roadFootprints(slim,id),roadFootprints(graph,id));
  }
+});
+
+
+test('hydro profile refuses missing or invalid raw bounds instead of lifting water',()=>{
+ const all=context().map(t=>t.environment),gs=all.map(prepareWaterGeometry);
+ assert.throws(()=>buildWaterSurfaceProfile(all,gs,{...sourceHeight,heightBounds:undefined},'a'.repeat(64)),/ENVELOPE_REQUIRED/);
+ const p=buildWaterSurfaceProfile(all,gs,{...sourceHeight,heightBounds:()=>({minimumMeters:NaN,maximumMeters:10})},'a'.repeat(64));
+ assert.throws(()=>p.levelAt((x+.5)/2**z,(y+.5)/2**z),/ENVELOPE_INVALID/);
+});
+test('hydro profile caps a raised median using the full raw interpolation support',()=>{
+ const all=context().map(t=>t.environment),gs=all.map(prepareWaterGeometry);
+ // Point taps alone see the high value. The source certifies that its
+ // interpolation support ALSO contains a lower depression between those taps.
+ const raw={...sourceHeight,heightAt:()=>20,heightBounds:()=>({minimumMeters:10,maximumMeters:20})};
+ const p=buildWaterSurfaceProfile(all,gs,raw,'a'.repeat(64));
+ for(const [dx,dy] of [[.1,.4],[.5,.5],[.99,.88]])assert.ok(Math.abs(p.levelAt((x+dx)/2**z,(y+dy)/2**z)-9.9)<1e-12);
+});
+test('hydro capped profile stays identical at region borders in reversed load order',()=>{
+ const all=context().map(t=>t.environment),gs=all.map(prepareWaterGeometry);
+ const a=buildWaterSurfaceProfile(all,gs,sourceHeight,'a'.repeat(64));
+ const b=buildWaterSurfaceProfile([...all].reverse(),[...gs].reverse(),sourceHeight,'a'.repeat(64));
+ for(const u of [x/2**z,(x+1)/2**z])for(let j=0;j<=16;j++)assert.equal(a.levelAt(u,(y+j/16)/2**z),b.levelAt(u,(y+j/16)/2**z));
+});
+
+test('hydro fine-star bound confines a local depression instead of dragging distant banks down',()=>{
+ const all=context().map(t=>t.environment),gs=all.map(prepareWaterGeometry),s=2**z;
+ const hole=[(x+.5)/s,(y+.5)/s];
+ const raw={...sourceHeight,heightAt:()=>30,heightBounds:(w,n,e,so)=>({minimumMeters:w<=hole[0]&&e>=hole[0]&&n<=hole[1]&&so>=hole[1]?20:30,maximumMeters:30})};
+ const p=buildWaterSurfaceProfile(all,gs,raw,'a'.repeat(64));
+ assert.ok(p.levelAt(...hole)<20);
+ assert.ok(p.levelAt((x+.6)/s,(y+.5)/s)>29.8);
+ const first=p.levelAt((x+.05)/s,(y+.05)/s);
+ for(let j=0;j<64;j++)for(let i=0;i<64;i++)p.levelAt((x+i/64)/s,(y+j/64)/s);
+ assert.equal(p.levelAt((x+.05)/s,(y+.05)/s),first,'bounded memo eviction cannot alter the function');
 });

@@ -1,7 +1,7 @@
 name: PR15b - bounded live hydro review (no deployment)
 on:
   push:
-    branches: [fix/pr15b-hydro-reconciliation]
+    branches: [fix/pr15b-hydro-reconciliation, fix/pr15b-water-levels]
 permissions:
   contents: read
 concurrency:

@@ -45,12 +45,14 @@ export function assertWaterReadSets(reads:readonly WaterRead[],sets:readonly (re
  * No duplicated coplanar surfaces, late terrain edits or water-floor collider. */
 export function buildWaterSurface(r:HydroRegion,t:TerrainCellPacket,readSet:readonly WaterRead[]=[],options:{readonly hydroRevision?:string}={}):WaterPacket {
   const conditioned=options.hydroRevision!==undefined, lift=conditioned?0:.03;
+  const n=r?.gridDivisions??L.gridDivisions;
+  if(n!==16&&n!==64)throw new Error('WATER_REGION_CONTRACT');
   if(conditioned&&!/^[a-f0-9]{64}$/.test(options.hydroRevision!))throw new Error('HYDRO_REVISION_CONTRACT');
   if(!r||r.heightAuthority!=='estimated-not-hydraulically-qualified'||r.verticalReference!==t.verticalReference||
-    !(r.levels instanceof Float64Array)||r.levels.length!==(L.gridDivisions+1)**2||r.levels.some(v=>!Number.isFinite(v)||Math.abs(v)>100000)||
+    !(r.levels instanceof Float64Array)||r.levels.length!==(n+1)**2||r.levels.some(v=>!Number.isFinite(v)||Math.abs(v)>100000)||
     r.geometry.z!==r.z||r.geometry.x!==r.x||r.geometry.y!==r.y||r.geometry.primitives.length>L.maxSourceTriangles)throw new Error('WATER_REGION_CONTRACT');
   if(t.id.level<r.z||t.id.level>21||t.id.level<15)throw new Error('WATER_CELL_LEVEL');
-  const cellBox=box(t.id.level,t.id.x,t.id.y),cell=rectangle(cellBox),n=L.gridDivisions,period=2**r.z*n;
+  const cellBox=box(t.id.level,t.id.x,t.id.y),cell=rectangle(cellBox),period=2**r.z*n;
   if(!overlaps(cellBox,r.geometry.core))throw new Error('WATER_REGION_MISMATCH');
   const primitives=r.geometry.primitives.filter(p=>overlaps(p.bounds,cellBox));
   const positions:number[]=[],normals:number[]=[],uvs:number[]=[],indices:number[]=[],vertices=new Map<string,number>();

@@ -34,6 +34,9 @@ export function rasterElevationSource(mosaic: RasterMosaic, metadata: ElevationM
     id, evidenceId: correction?.evidenceId ?? metadata.snapshotId,
     verticalReference: canonical ? 'ELLIPSOIDAL_WGS84' as const : 'UNRESOLVED_DATUM_PREVIEW' as const,
     provenance: canonical ? (converted ? 'converted' as const : 'observed' as const) : 'estimated' as const,
+    // Only expose unconverted bounds: an arbitrary geoid undulation need not
+    // be constant inside a raster pixel. Never mix bounds from another datum.
+    ...(!converted ? {heightBounds: (w:number,n:number,e:number,s:number) => mosaic.heightBounds(w,n,e,s)} : {}),
     heightAt(position: GeodeticPosition) {
       const uv = projectMercator(position.longitudeRad, position.latitudeRad);
       const raw = mosaic.heightAt(uv.u, uv.v);

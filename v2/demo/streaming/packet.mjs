@@ -1,3 +1,4 @@
+import { HYDRO_VERSION } from '../../src/generation/hydro/conditioned-elevation.ts';
 import { validateHydroCohort } from '../hydro/cohort.mjs';
 import { waterPacketBytes } from '../../src/generation/water/surface.ts';
 import { environmentPacketBytes } from '../../src/generation/environment/debug-packet.ts';
@@ -9,7 +10,7 @@ import { streamCellKey, STREAM_LIMITS } from '../../src/streaming/selection.ts';
 export function packetCacheKey(job) {
   // Every change of formula/format/source/LOD creates a separate namespace.
   return `stream-packet-v2-bvh/WGS84-ECEF/terrain-v1/${job.source}/${job.profile}/` +
-    `${job.source === 'mapbox' ? 'unresolved-preview' : 'ellipsoidal'}/${job.hydro?'hydro-conditioned-v1/':''}${job.engineering?'real-engineering-v1/':''}${streamCellKey(job.id)}/N${job.subdivisions}`;
+    `${job.source === 'mapbox' ? 'unresolved-preview' : 'ellipsoidal'}/${job.hydro?`${HYDRO_VERSION}/`:''}${job.engineering?'real-engineering-v1/':''}${streamCellKey(job.id)}/N${job.subdivisions}`;
 }
 export function packetBytes(bundle) {
   const p = bundle.packet;

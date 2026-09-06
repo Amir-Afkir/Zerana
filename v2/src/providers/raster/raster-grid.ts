@@ -93,6 +93,30 @@ export class RasterMosaic {
     }
     return value;
   }
+  /** Bounds every bilinear interpolation in a rectangle, including the texels
+   * just outside it that contribute to interpolation. Convex weights imply the
+   * result lies in [min,max]. No nodata skipping, fetching or tile mutation.
+   * The operation is bounded independently of source resolution. */
+  heightBounds(west: number, north: number, east: number, south: number): {minimumMeters:number;maximumMeters:number} {
+    if(this.kind !== 'height') throw new TypeError('Not an elevation mosaic');
+    if(![west,north,east,south].every(Number.isFinite) || east < west || east-west > 1 || north < 0 || south > 1 || south < north)
+      throw new RangeError('Invalid elevation bounds');
+    const period=this.size*2**this.zoom;
+    const x0=Math.floor(west*period-.5),x1=Math.ceil(east*period-.5);
+    const y0=Math.max(0,Math.floor(north*period-.5)),y1=Math.min(period-1,Math.ceil(south*period-.5));
+    if((x1-x0+1)*(y1-y0+1)>65536)throw new RangeError('ELEVATION_BOUNDS_BUDGET');
+    let min=Infinity,max=-Infinity;
+    for(let y=y0;y<=y1;y++)for(let gx=x0;gx<=x1;gx++){
+      const x=((gx%period)+period)%period;
+      const t=this.tiles.get(`${this.zoom}/${Math.floor(x/this.size)}/${Math.floor(y/this.size)}`) as HeightTile | undefined;
+      if(!t)throw new RangeError('Missing raster coverage for elevation bounds');
+      const h=t.heights[(y%this.size)*this.size+x%this.size]!;
+      if(!Number.isFinite(h))throw new RangeError('Elevation nodata in bounds footprint');
+      min=Math.min(min,h);max=Math.max(max,h);
+    }
+    if(!Number.isFinite(min)||!Number.isFinite(max))throw new RangeError('Empty elevation bounds');
+    return {minimumMeters:min,maximumMeters:max};
+  }
   rgbaAt(u: number, v: number): readonly [number, number, number, number] {
     if (this.kind !== 'rgba') throw new TypeError('Not an imagery mosaic');
     const linear = [0, 0, 0];
