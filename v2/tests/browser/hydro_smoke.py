@@ -8,7 +8,7 @@ from urllib.parse import urlsplit, parse_qs
 from playwright.async_api import async_playwright
 from provider_smoke import png, QuietHandler
 from environment_smoke import environmental_mvt
-from experience_smoke import query, walk
+from experience_smoke import query
 ROOT = Path(__file__).resolve().parents[2]
 LIVE = os.getenv('ZERANA_LIVE_HYDRO') == '1'
 OUTPUT = ROOT/'browser-results'/('hydro-live' if LIVE else 'hydro')
@@ -20,6 +20,28 @@ READY = '''() => {
  if(h?.error||s?.error||w?.error)throw Error(h?.error||s?.error||w?.error);
  if(s?.scheduler?.errors?.length)throw Error(s.scheduler.errors[0].message||s.scheduler.errors[0].error||'HYDRO_STREAM_FAILED');
  return h?.active&&s?.active&&!s.waitingForWindow&&s.shownKeys.length===9&&s.shownKeys.every(k=>h.cells.some(c=>c.key===k&&c.colliderPrepared)&&w?.cells.some(c=>c.key===k&&c.ready));}'''
+
+async def walk(page, key, distance, timeout=60000):
+    # Falling is NOT traversal. Measure the component tangent to the initial
+    # ellipsoidal up direction and fail promptly on any rejected stream cell.
+    start=await page.evaluate('window.__ZERANA_PLAYER_DEBUG__.state.ecefPosition')
+    await page.keyboard.down('ShiftLeft');await page.keyboard.down(key)
+    try:
+        await page.wait_for_function("""args=>{
+          const p=window.__ZERANA_PLAYER_DEBUG__,s=window.__ZERANA_STREAM_DEBUG__;
+          if(p.runtimeError)throw Error(p.runtimeError);
+          if(s?.scheduler?.errors?.length)throw Error('HYDRO_STREAM_FAILED');
+          const a=args.start,b=p.state.ecefPosition;
+          const d=[b.xMeters-a.xMeters,b.yMeters-a.yMeters,b.zMeters-a.zMeters];
+          // 70m local excursion: radial up suffices for a traversal regression,
+          // not a replacement for the canonical geospatial transformations.
+          const n=Math.hypot(a.xMeters,a.yMeters,a.zMeters),u=[a.xMeters/n,a.yMeters/n,a.zMeters/n];
+          const vertical=d.reduce((v,x,i)=>v+x*u[i],0);
+          if(Math.abs(vertical)>20)throw Error('PLAYER_LEFT_LOCAL_GROUND');
+          return Math.sqrt(Math.max(0,d.reduce((v,x)=>v+x*x,0)-vertical*vertical))>=args.distance;
+        }""",arg={'start':start,'distance':distance},timeout=timeout)
+    finally:
+        await page.keyboard.up(key);await page.keyboard.up('ShiftLeft')
 
 async def run(base):
     OUTPUT.mkdir(parents=True, exist_ok=True)
@@ -123,6 +145,7 @@ async def run(base):
                 # Restore heading: the existing 70m east/west route is unchanged.
                 await page.mouse.move(mx+dx,my);await page.mouse.down()
                 await page.mouse.move(mx,my,steps=12);await page.mouse.up()
+                await page.wait_for_timeout(150)
                 after_heading=(await page.evaluate(STATE))['player']['state']['headingRad']
                 assert abs(after_heading-before_heading)<1e-6
             return q
