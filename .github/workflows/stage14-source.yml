@@ -1,0 +1,23 @@
+name: Stage 14 pinned source
+on:
+  push:
+    branches: [work/stage14-source]
+permissions:
+  contents: read
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 02199177a9364eb9dabaff16532fc36f398aee4d
+      - run: |
+          git archive --format=tar.gz HEAD > /tmp/stage14-source.tar.gz
+          git ls-tree -r HEAD > /tmp/stage14-source.tree
+          git rev-parse HEAD > /tmp/stage14-source.sha
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stage14-source
+          path: /tmp/stage14-source.*
+          retention-days: 2
