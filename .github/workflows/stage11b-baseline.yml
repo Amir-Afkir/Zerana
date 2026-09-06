@@ -1,0 +1,25 @@
+name: Stage 11b pinned baseline
+on:
+  push:
+    branches: [work/stage11b-baseline]
+permissions:
+  contents: read
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 5a5c758012d2315deeeb30c65894be664ceb379c
+          persist-credentials: false
+      - name: Archive exact tracked source
+        run: |
+          git archive --format=tar.gz HEAD > /tmp/zerana-stage11b-baseline.tar.gz
+          git rev-parse HEAD > /tmp/zerana-stage11b-baseline.sha
+          git ls-tree -r HEAD > /tmp/zerana-stage11b-baseline.tree
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stage11b-baseline
+          path: /tmp/zerana-stage11b-baseline.*
+          retention-days: 2
