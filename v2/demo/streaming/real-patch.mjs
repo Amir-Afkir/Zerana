@@ -1,3 +1,4 @@
+import { admitHydroCohort } from '../hydro/cohort.mjs';
 import { MercatorCellScheme } from '../../src/geo/mercator-cell-scheme.ts';
 import { StreamWorkerPool } from './worker-pool.mjs';
 import { validatePacket } from './packet.mjs';
@@ -18,7 +19,7 @@ export async function prepareRealPatch(ids,position,config,signal,onProgress){
   try{
     for(let i=0;i<ids.length;i++){
       check(signal);const grant=Math.min(128,256-used);if(grant<=0)throw new Error('STREAM_HTTP_BUDGET');
-      const job={...config,id:ids[i],engineering:true,persistent:false,layer:'terrain',httpGrant:grant,probe:position};
+      const job={...config,id:ids[i],engineering:config.engineering===true,hydro:config.hydro===true,persistent:false,layer:'terrain',httpGrant:grant,probe:position};
       // Probe only the cell containing the spawn: other contexts need not contain it.
       // The containing cell is explicitly sorted first.
       if(i!==0)delete job.probe;
@@ -26,7 +27,8 @@ export async function prepareRealPatch(ids,position,config,signal,onProgress){
       if(!Number.isSafeInteger(result.attempts)||result.attempts<0||result.attempts>grant)throw new Error('ROAD_ENGINEERING_HTTP_ACCOUNT');
       used+=result.attempts;sourceCacheBytes=result.sourceCacheBytes;
       const b=validatePacket(result.bundle,job);
-      assertReadSetsCompatible(b.engineering.readSet,bundles.map(v=>v.engineering.readSet));
+      if(config.hydro)admitHydroCohort(b,bundles);
+      else assertReadSetsCompatible(b.engineering.readSet,bundles.map(v=>v.engineering.readSet));
       const validator=TriangleIndex.adopt(b.collider,b.packet.positions,b.packet.indices);let step;
       do{check(signal);const deadline=performance.now()+3;do{step=validator.next();}while(!step.done&&performance.now()<deadline);if(!step.done)await frame();}while(!step.done);
       b.colliderIndex=step.value;prepared.set(b.packet,step.value);bundles.push(b);

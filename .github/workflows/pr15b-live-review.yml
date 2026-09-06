@@ -1,0 +1,48 @@
+name: PR15b - bounded live hydro review (no deployment)
+on:
+  push:
+    branches: [fix/pr15b-hydro-reconciliation]
+permissions:
+  contents: read
+concurrency:
+  group: pr15b-live-review
+  cancel-in-progress: false
+jobs:
+  live-hydro:
+    if: contains(github.event.head_commit.message, '[verify-hydro-live]')
+    environment: Production
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: npm ci
+      - name: Build isolated review from this exact branch
+        env:
+          VITE_MAPBOX_API_KEY: ${{ secrets.VITE_MAPBOX_API_KEY }}
+        run: node scripts/build-pages.mjs
+      - name: Install browser
+        run: |
+          python -m pip install -r v2/tests/browser/requirements.txt
+          python -m playwright install --with-deps chromium
+      - name: Bounded real Seine and hydro probes
+        env:
+          ZERANA_LIVE_HYDRO: '1'
+          ZERANA_EXPECTED_SHA: ${{ github.sha }}
+          ZERANA_EXPECTED_TOKEN_SHA256: '9a1c9c843f9a77e5fcb98cb69f6267139fd9c547abf483c60326f4aa9316c0bc'
+        run: python v2/tests/browser/hydro_smoke.py
+      - name: Retain only sanitized review evidence, never the credentialed build
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr15b-live-hydro-evidence
+          path: v2/browser-results/hydro-live/
+          retention-days: 7

@@ -54,6 +54,8 @@ jobs:
         run: |
           python -m pip install -r v2/tests/browser/requirements.txt
           python -m playwright install --with-deps chromium
+      - name: Validate coherent hydro terrain and colliders before publication
+        run: python v2/tests/browser/hydro_smoke.py
       - name: Validate water surfaces before publication
         run: python v2/tests/browser/water_smoke.py
       - name: Validate shared environment diagnostics before publication
@@ -117,6 +119,11 @@ jobs:
         run: |
           python -m pip install -r v2/tests/browser/requirements.txt
           python -m playwright install --with-deps chromium
+      - name: Verify coherent hydro terrain and colliders on published site
+        env:
+          ZERANA_PREVIEW_URL: ${{ needs.deploy.outputs.page_url }}v2/
+          ZERANA_EXPECTED_SHA: ${{ github.sha }}
+        run: python v2/tests/browser/hydro_smoke.py
       - name: Verify water surfaces on published site
         env:
           ZERANA_PREVIEW_URL: ${{ needs.deploy.outputs.page_url }}v2/
@@ -220,12 +227,22 @@ jobs:
           ZERANA_EXPECTED_SHA: ${{ github.sha }}
           ZERANA_EXPECTED_TOKEN_SHA256: '9a1c9c843f9a77e5fcb98cb69f6267139fd9c547abf483c60326f4aa9316c0bc'
         run: python v2/tests/browser/water_smoke.py
+      - name: Bounded real hydro reconciliation on published site
+        if: contains(github.event.head_commit.message, '[verify-hydro-live]')
+        env:
+          ZERANA_LIVE_HYDRO: '1'
+          ZERANA_PREVIEW_URL: ${{ needs.deploy.outputs.page_url }}v2/
+          ZERANA_EXPECTED_SHA: ${{ github.sha }}
+          ZERANA_EXPECTED_TOKEN_SHA256: '9a1c9c843f9a77e5fcb98cb69f6267139fd9c547abf483c60326f4aa9316c0bc'
+        run: python v2/tests/browser/hydro_smoke.py
       - name: Retain sanitized public verification
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: published-preview-verification
           path: |
+            v2/browser-results/hydro/
+            v2/browser-results/hydro-live/
             v2/browser-results/water/
             v2/browser-results/water-live/
             v2/browser-results/environment/

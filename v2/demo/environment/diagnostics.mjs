@@ -15,7 +15,7 @@ export class EnvironmentDiagnostics {
     this.toggle.addEventListener('change',()=>{this.enabled=this.toggle.checked;for(const r of this.records.values())if(r.mesh)r.mesh.visible=this.enabled&&r.stage==='ready';this.report();},{signal:session.events.signal});this.report();
   }
   current(r){return this.stream.loaded.get(r.key)===r.bundle&&this.view.findCell(r.bundle.packet.id)===r.cell;}
-  payloadBytes(key){return this.records.get(key)?.bytes||0;}
+  payloadBytes(key){const r=this.records.get(key);return r?.bundle.hydro?0:r?.bytes||0;}
   resize(r){if(this.stream.recycling&&this.stream.loaded.get(r.key)===r.bundle)this.stream.recycling.resize(r.key,packetBytes(r.bundle)+this.stream.layerPayloadBytes(r.key));}
   remove(key){
     const r=this.records.get(key);if(!r)return;r.mesh?.removeFromParent();
@@ -34,7 +34,7 @@ export class EnvironmentDiagnostics {
         const [tile,digest]=s.split('@');if(revisions.has(tile)&&revisions.get(tile)!==digest)throw new Error('ENV_SNAPSHOT_CONFLICT');
       }
       const bytes=environmentPacketBytes(packet);
-      if(this.bytes+bytes>ENV_LIMITS.residentBytes||this.stream.recycling&&!this.stream.recycling.fits(bytes,0))throw new Error('ENV_RESIDENCY_BUDGET');
+      if(this.bytes+bytes>ENV_LIMITS.residentBytes||!bundle.hydro&&this.stream.recycling&&!this.stream.recycling.fits(bytes,0))throw new Error('ENV_RESIDENCY_BUDGET');
       const r={key,bundle,cell,packet,bytes,stage:'data',mesh:null,geometry:null,material:null,everVisible:false,lastVisible:false};
       this.records.set(key,r);this.bytes+=bytes;try{this.resize(r);}catch(e){this.records.delete(key);this.bytes-=bytes;throw e;}
     }catch(e){this.error=/^ENV_[A-Z_]+$/.test(e.message)?e.message:'ENV_ADMISSION_FAILED';}
