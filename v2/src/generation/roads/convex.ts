@@ -39,10 +39,23 @@ export function splitHalfPlane(p: ConvexPolygon, a: Point2, b: Point2): { inside
   }
   return { inside: clean(inside), outside: clean(outside) };
 }
+/** Separating-axis test for CCW convex polygons. A touching edge/point has
+ * zero area and does not require any cut. Inputs use local terrain grid units. */
+function disjointConvex(a: ConvexPolygon, b: ConvexPolygon): boolean {
+  const separated = (polygon: ConvexPolygon, other: ConvexPolygon): boolean =>
+    polygon.some((v, i) => other.every(p => cross2(v, polygon[(i + 1) % polygon.length]!, p) <= 0));
+  return separated(a, b) || separated(b, a);
+}
 /** Partitions subject into its convex intersection with clip and disjoint convex
  * outside pieces. Repeating this builds a union without overlapping triangles,
  * including holes, with no general-purpose polygon/earcut dependency. */
 export function partitionConvex(subject: ConvexPolygon, clip: ConvexPolygon): { inside: ConvexPolygon; outside: ConvexPolygon[] } {
+  // A separating axis proves that there is no positive-area intersection.
+  // Do not split the subject using extensions of edges of a disjoint clip:
+  // these artificial cuts can grow the uncovered arrangement exponentially.
+  // Use the SAME signed half-plane predicates as clipping; no new weld epsilon.
+  if (subject.length >= 3 && clip.length >= 3 && disjointConvex(subject, clip))
+    return { inside: [], outside: [subject] };
   let inside = subject;
   const outside: ConvexPolygon[] = [];
   for (let i = 0; i < clip.length && inside.length; i++) {
