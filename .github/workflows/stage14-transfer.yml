@@ -1,0 +1,39 @@
+name: Stage 14 verified source transfer
+on:
+  push:
+    branches: [work/stage14-transfer]
+permissions:
+  contents: write
+jobs:
+  transfer:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Validate and materialize pinned code on isolated feature branch
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import base64, hashlib, lzma
+          encoded = ''.join(Path(f'.transfer/stage14/{i:02d}.b64').read_text().strip() for i in range(5))
+          assert len(encoded) == 33128
+          decoder = lzma.LZMADecompressor(memlimit=64*1024*1024)
+          patch = decoder.decompress(base64.b64decode(encoded, validate=True), max_length=200000)
+          assert decoder.eof and not decoder.unused_data and len(patch) == 88015
+          assert hashlib.sha256(patch).hexdigest() == 'a2c4f1a853037321103a735cff5421b7b6e6b42cc0db54425a04fe4961d3a574'
+          Path('/tmp/stage14.patch').write_bytes(patch)
+          PY
+          BASE=02199177a9364eb9dabaff16532fc36f398aee4d
+          TARGET=refs/heads/feature/environment-kernel
+          test -z "$(git ls-remote --heads origin "$TARGET")"
+          git checkout --detach "$BASE"
+          git apply --index /tmp/stage14.patch
+          test "$(git write-tree)" = c26138ed9b346acb39f456ed737b73b8009597a6
+          git diff --cached --exit-code "$BASE" -- src public index.html package.json package-lock.json vite.config.js v2/package.json v2/package-lock.json v2/src/geo .github/workflows
+          git diff --cached --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'feat(v2): add shared environmental vector kernel and streamed diagnostics'
+          git push origin "HEAD:$TARGET"
